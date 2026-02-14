@@ -8,6 +8,7 @@ import Login from '@/pages/Login/Login';
 import { DashBoard } from '@/pages/DashBoard/DashBoard';
 import { CreateClass } from '@/pages/CreateClass/CreateClass';
 import { ClassUserAccess } from '@/pages/ClassUserAccess/ClassUserAccess';
+import { CreatingTest } from '@/pages/CreatingTest/CreatingTest';
 
 // Routes configuration - only import structure
 const routes: RouteObject[] = [
@@ -31,6 +32,10 @@ const routes: RouteObject[] = [
                             {
                 path: "/şagird-icazeleri",
                 element: <ClassUserAccess />
+            },
+                                        {
+                path: "/test-hazirla",
+                element: <CreatingTest />
             },
         ],
     },

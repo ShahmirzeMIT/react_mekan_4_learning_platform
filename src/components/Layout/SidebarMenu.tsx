@@ -4,7 +4,8 @@ import {
   AppstoreOutlined,
   BuildOutlined,
   UserOutlined,
-  BookOutlined
+  BookOutlined,
+  FormOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 
@@ -57,6 +58,11 @@ const SidebarMenu = ({
       key: "şagird-icazeleri",
       icon:<UserOutlined/>,
       label: "Şagird Icazələri",
+    },
+        {   
+      key: "test-hazirla",
+      icon:<FormOutlined/>,
+      label: "Test Hazirla",
     }
 
   ];
