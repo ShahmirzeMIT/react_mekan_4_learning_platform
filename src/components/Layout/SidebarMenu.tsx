@@ -3,7 +3,7 @@ import { Drawer, Menu } from 'antd';
 import {
   AppstoreOutlined,
   BuildOutlined,
-  DatabaseOutlined,
+  UserOutlined,
   BookOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
@@ -53,6 +53,11 @@ const SidebarMenu = ({
       icon: <BookOutlined />,
       label: "Sinif Yarat",
     },
+    {   
+      key: "şagird-icazeleri",
+      icon:<UserOutlined/>,
+      label: "Şagird Icazələri",
+    }
 
   ];
 

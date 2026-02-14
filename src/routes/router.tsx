@@ -7,6 +7,7 @@ import CanvasNotFound from '@/pages/NotFound/CanvasNotFound';
 import Login from '@/pages/Login/Login';
 import { DashBoard } from '@/pages/DashBoard/DashBoard';
 import { CreateClass } from '@/pages/CreateClass/CreateClass';
+import { ClassUserAccess } from '@/pages/ClassUserAccess/ClassUserAccess';
 
 // Routes configuration - only import structure
 const routes: RouteObject[] = [
@@ -26,6 +27,10 @@ const routes: RouteObject[] = [
                 {
                 path: "/sinif-yarat",
                 element: <CreateClass />
+            },
+                            {
+                path: "/şagird-icazeleri",
+                element: <ClassUserAccess />
             },
         ],
     },
