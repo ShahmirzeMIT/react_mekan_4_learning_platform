@@ -6,6 +6,7 @@ import { Navigate } from "react-router-dom";
 import CanvasNotFound from '@/pages/NotFound/CanvasNotFound';
 import Login from '@/pages/Login/Login';
 import { DashBoard } from '@/pages/DashBoard/DashBoard';
+import { CreateClass } from '@/pages/CreateClass/CreateClass';
 
 // Routes configuration - only import structure
 const routes: RouteObject[] = [
@@ -21,6 +22,10 @@ const routes: RouteObject[] = [
             {
                 path: "/dashboard",
                 element: <DashBoard />
+            },
+                {
+                path: "/sinif-yarat",
+                element: <CreateClass />
             },
         ],
     },

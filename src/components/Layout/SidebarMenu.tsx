@@ -4,6 +4,7 @@ import {
   AppstoreOutlined,
   BuildOutlined,
   DatabaseOutlined,
+  BookOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 
@@ -11,9 +12,7 @@ const { SubMenu } = Menu;
 
 // Map module_id to Ant Design icons
 const iconMap: Record<string, React.ReactNode> = {
-  'ui-canvas': <AppstoreOutlined />,
-  'ui-editor': <BuildOutlined />,
-  'db': <DatabaseOutlined />,
+'sinif-yarat':<BookOutlined/>
 };
 
 // Default icon for unknown modules (won't be used)
@@ -45,20 +44,16 @@ const SidebarMenu = ({
   // Static menu items - only the ones we want
   const menuItems: MenuItem[] = [
     {
-      key: "ui-canvas",
+      key: "dashboard",
       icon: <AppstoreOutlined />,
-      label: "UI Canvas",
+      label: "DashBoard",
     },
     {
-      key: "ui-editor",
-      icon: <BuildOutlined />,
-      label: "UI Editor",
+      key: "sinif-yarat",
+      icon: <BookOutlined />,
+      label: "Sinif Yarat",
     },
-    {
-      key: "db",
-      icon: <DatabaseOutlined />,
-      label: "Database",
-    }
+
   ];
 
   const handleMenuClick = ({ key }: { key: string }) => {
