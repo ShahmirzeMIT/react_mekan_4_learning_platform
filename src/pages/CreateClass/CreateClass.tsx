@@ -33,7 +33,9 @@ import {
   ScheduleOutlined,
   TeamOutlined,
   ReadOutlined,
-  CodeOutlined
+  CodeOutlined,
+  DragOutlined,
+  WarningOutlined
 } from '@ant-design/icons';
 import {
   collection,
@@ -45,11 +47,13 @@ import {
   where,
   orderBy,
   Timestamp,
-  onSnapshot
+  onSnapshot,
+  writeBatch
 } from 'firebase/firestore';
 import { db } from '@/config/firebase';
 import HtmlEditorComp from './HtmlEditorComp';
 import HtmlCodeShow from './HtmlCodeShow';
+import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 
 const { Title, Text } = Typography;
 const { TextArea } = Input;
@@ -140,6 +144,7 @@ export const CreateClass = () => {
   const [editingClass, setEditingClass] = useState(null);
   const [editingLesson, setEditingLesson] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [indexBuilding, setIndexBuilding] = useState(false);
   const [form] = Form.useForm();
   const [lessonForm] = Form.useForm();
   const [lessonContent, setLessonContent] = useState('');
@@ -171,32 +176,91 @@ export const CreateClass = () => {
     }
 
     const lessonsRef = collection(db, COLLECTIONS.LESSONS);
-    const q = query(
-      lessonsRef,
-      where('classId', '==', selectedClass.id)
-    );
+    
+    // Try to use ordered query first
+    try {
+      const q = query(
+        lessonsRef,
+        where('classId', '==', selectedClass.id),
+        orderBy('order', 'asc')
+      );
 
-    const unsubscribe = onSnapshot(q, (snapshot) => {
-      const lessonsData = snapshot.docs.map((doc, index) => ({
-        id: doc.id,
-        ...doc.data(),
-        key: doc.id,
-        sno: index + 1
-      }));
-      setLessons(lessonsData);
-    }, (error) => {
-      console.error('Error fetching lessons:', error);
-      message.error('Error fetching lessons: ' + error.message);
-    });
+      const unsubscribe = onSnapshot(q, (snapshot) => {
+        const lessonsData = snapshot.docs.map((doc, index) => ({
+          id: doc.id,
+          ...doc.data(),
+          key: doc.id,
+          sno: index + 1
+        }));
+        setLessons(lessonsData);
+        setIndexBuilding(false);
+      }, (error) => {
+        // If index is building, fall back to client-side sorting
+        if (error.message.includes('index is currently building')) {
+          setIndexBuilding(true);
+          // Fallback query without orderBy
+          const fallbackQuery = query(
+            lessonsRef,
+            where('classId', '==', selectedClass.id)
+          );
+          
+          const fallbackUnsubscribe = onSnapshot(fallbackQuery, (snapshot) => {
+            const lessonsData = snapshot.docs.map(doc => ({
+              id: doc.id,
+              ...doc.data(),
+              key: doc.id
+            }));
+            
+            // Sort client-side by order field (if exists) or by createdAt
+            const sortedData = lessonsData
+              .sort((a, b) => {
+                // If both have order, sort by order
+                if (a.order !== undefined && b.order !== undefined) {
+                  return a.order - b.order;
+                }
+                // If one has order and other doesn't, prioritize those with order
+                if (a.order !== undefined) return -1;
+                if (b.order !== undefined) return 1;
+                // If neither has order, sort by createdAt
+                return (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0);
+              })
+              .map((item, index) => ({ ...item, sno: index + 1 }));
+              
+            setLessons(sortedData);
+          }, (fallbackError) => {
+            console.error('Error fetching lessons:', fallbackError);
+            message.error('Error fetching lessons: ' + fallbackError.message);
+          });
+          
+          return fallbackUnsubscribe;
+        } else {
+          console.error('Error fetching lessons:', error);
+          message.error('Error fetching lessons: ' + error.message);
+        }
+      });
 
-    return () => unsubscribe();
+      return () => unsubscribe();
+    } catch (error) {
+      console.error('Error setting up lessons listener:', error);
+      message.error('Error setting up lessons listener: ' + error.message);
+    }
   }, [selectedClass]);
 
   const handleCreateClass = async (values) => {
     try {
       setLoading(true);
+      
+      // Clean the values to remove undefined fields
+      const cleanValues = {
+        name: values.name || '',
+        description: values.description || '',
+        grade: values.grade || '',
+        subject: values.subject || '',
+        tags: values.tags || []
+      };
+
       const classData = {
-        ...values,
+        ...cleanValues,
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
         lessonCount: 0,
@@ -218,6 +282,7 @@ export const CreateClass = () => {
       form.resetFields();
       setEditingClass(null);
     } catch (error) {
+      console.error('Error saving class:', error);
       message.error('Error saving class: ' + error.message);
     } finally {
       setLoading(false);
@@ -250,13 +315,20 @@ export const CreateClass = () => {
         return;
       }
 
+      // Clean the values to remove undefined
+      const cleanValues = {
+        title: values.title || '',
+        status: values.status || 'draft'
+      };
+
       const lessonData = {
-        title: values.title,
+        title: cleanValues.title,
         content: lessonContent,
         classId: selectedClass.id,
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
-        status: values.status || 'draft'
+        status: cleanValues.status,
+        order: lessons.length // Add order field for drag and drop
       };
 
       if (editingLesson) {
@@ -283,6 +355,7 @@ export const CreateClass = () => {
       setLessonContent('');
       setEditingLesson(null);
     } catch (error) {
+      console.error('Error saving lesson:', error);
       message.error('Error saving lesson: ' + error.message);
     } finally {
       setLoading(false);
@@ -297,7 +370,7 @@ export const CreateClass = () => {
       // Update class lesson count
       const classRef = doc(db, COLLECTIONS.CLASSES, selectedClass.id);
       await updateDoc(classRef, {
-        lessonCount: lessons.length - 1,
+        lessonCount: Math.max(0, lessons.length - 1),
         updatedAt: Timestamp.now()
       });
       
@@ -306,6 +379,47 @@ export const CreateClass = () => {
       message.error('Error deleting lesson: ' + error.message);
     } finally {
       setLoading(false);
+    }
+  };
+
+  // Handle drag and drop reordering
+  const handleDragEnd = async (result) => {
+    if (!result.destination) return;
+
+    const items = Array.from(lessons);
+    const [reorderedItem] = items.splice(result.source.index, 1);
+    items.splice(result.destination.index, 0, reorderedItem);
+
+    // Update local state immediately for smooth UI
+    const updatedItems = items.map((item, index) => ({
+      ...item,
+      sno: index + 1
+    }));
+    setLessons(updatedItems);
+
+    // Update order in Firestore
+    try {
+      const batch = writeBatch(db);
+      
+      items.forEach((item, index) => {
+        const lessonRef = doc(db, COLLECTIONS.LESSONS, item.id);
+        batch.update(lessonRef, { 
+          order: index,
+          updatedAt: Timestamp.now()
+        });
+      });
+
+      await batch.commit();
+      message.success('Lesson order updated successfully');
+    } catch (error) {
+      console.error('Error updating lesson order:', error);
+      message.error('Error updating lesson order: ' + error.message);
+      // Revert to original order if error occurs
+      const originalItems = lessons.map((item, index) => ({
+        ...item,
+        sno: index + 1
+      }));
+      setLessons(originalItems);
     }
   };
 
@@ -352,107 +466,58 @@ export const CreateClass = () => {
     });
   };
 
-  // Lessons Table Columns
-  const lessonColumns = [
-    {
-      title: '№',
-      dataIndex: 'sno',
-      key: 'sno',
-      width: 60,
-      align: 'center'
-    },
-    {
-      title: 'Dərsin Başlığı',
-      dataIndex: 'title',
-      key: 'title',
-      render: (text) => (
-        <Space>
-          <ReadOutlined style={{ color: '#1890ff' }} />
-          <Text strong>{text}</Text>
-        </Space>
-      )
-    },
-    {
-      title: 'Status',
-      dataIndex: 'status',
-      key: 'status',
-      width: 100,
-      align: 'center',
-      render: (status) => {
-        const color = status === 'published' ? 'green' : status === 'draft' ? 'orange' : 'default';
-        return (
-          <Badge 
-            color={color}
-            text={status === 'published' ? 'Dərc edilib' : status === 'draft' ? 'Qaralama' : 'Arxiv'} 
-          />
-        );
+  // Function to migrate old lessons (add order field if missing)
+  const migrateLessons = async () => {
+    if (!selectedClass || lessons.length === 0) return;
+    
+    const lessonsWithoutOrder = lessons.filter(l => l.order === undefined);
+    if (lessonsWithoutOrder.length === 0) return;
+    
+    Modal.confirm({
+      title: 'Köhnə dərsləri yenilə',
+      content: `${lessonsWithoutOrder.length} köhnə dərs tapıldı. Onlara sıra nömrəsi əlavə edilsin?`,
+      okText: 'Bəli',
+      cancelText: 'Xeyr',
+      onOk: async () => {
+        try {
+          setLoading(true);
+          const batch = writeBatch(db);
+          
+          lessons.forEach((lesson, index) => {
+            if (lesson.order === undefined) {
+              const lessonRef = doc(db, COLLECTIONS.LESSONS, lesson.id);
+              batch.update(lessonRef, { 
+                order: index,
+                updatedAt: Timestamp.now()
+              });
+            }
+          });
+          
+          await batch.commit();
+          message.success('Köhnə dərslər yeniləndi');
+        } catch (error) {
+          console.error('Error migrating lessons:', error);
+          message.error('Xəta baş verdi: ' + error.message);
+        } finally {
+          setLoading(false);
+        }
       }
-    },
-    {
-      title: 'Yaradılma Tarixi',
-      dataIndex: 'createdAt',
-      key: 'createdAt',
-      width: 120,
-      render: (date) => date ? new Date(date.toDate()).toLocaleDateString('az-AZ') : '-'
-    },
-    {
-      title: 'Əməliyyatlar',
-      key: 'actions',
-      width: 220,
-      align: 'center',
-      render: (_, record) => (
-        <Space size="middle">
-          <Tooltip title="Məzmunu göstər">
-            <Button 
-              type="text"
-              icon={<EyeOutlined />}
-              onClick={() => showContentPreview(record)}
-            />
-          </Tooltip>
-          <Tooltip title="HTML kodu göstər">
-            <Button 
-              type="text"
-              icon={<CodeOutlined />}
-              onClick={() => {
-                Modal.info({
-                  title: `${record.title} - HTML Kodu`,
-                  width: 900,
-                  content: (
-                    <div style={{ maxHeight: '600px', overflow: 'auto' }}>
-                      <HtmlCodeShow 
-                        data={{
-                          previewHtml: record.content,
-                          onChange: () => {}
-                        }} 
-                      />
-                    </div>
-                  ),
-                  okText: 'Bağla'
-                });
-              }}
-            />
-          </Tooltip>
-          <Tooltip title="Redaktə et">
-            <Button
-              type="text"
-              icon={<EditOutlined />}
-              onClick={() => openLessonDrawer(record)}
-            />
-          </Tooltip>
-          <Tooltip title="Sil">
-            <Popconfirm
-              title="Bu dərsi silmək istədiyinizə əminsiniz?"
-              onConfirm={() => handleDeleteLesson(record.id)}
-              okText="Bəli"
-              cancelText="Xeyr"
-            >
-              <Button type="text" danger icon={<DeleteOutlined />} />
-            </Popconfirm>
-          </Tooltip>
-        </Space>
-      )
+    });
+  };
+
+  // Check for lessons without order when lessons change
+  useEffect(() => {
+    if (lessons.length > 0) {
+      const lessonsWithoutOrder = lessons.filter(l => l.order === undefined);
+      if (lessonsWithoutOrder.length > 0) {
+        // Auto-migrate after a short delay
+        const timer = setTimeout(() => {
+          migrateLessons();
+        }, 2000);
+        return () => clearTimeout(timer);
+      }
     }
-  ];
+  }, [lessons]);
 
   return (
     <Layout style={{ minHeight: '100vh', padding: '24px', background: '#f0f2f5' }}>
@@ -528,7 +593,13 @@ export const CreateClass = () => {
                         onClick={(e) => {
                           e.stopPropagation();
                           setEditingClass(item);
-                          form.setFieldsValue(item);
+                          form.setFieldsValue({
+                            name: item.name,
+                            description: item.description,
+                            grade: item.grade,
+                            subject: item.subject,
+                            tags: item.tags || []
+                          });
                           setIsClassModalVisible(true);
                         }}
                       />
@@ -564,7 +635,7 @@ export const CreateClass = () => {
                         }} 
                       />
                     }
-                    title={<Text strong>{item.name}</Text>}
+                    title={<Text strong>{item.name || ''}</Text>}
                     description={
                       <Space size={[0, 4]} wrap>
                         {item.grade && <Tag color="cyan">{item.grade}</Tag>}
@@ -579,7 +650,7 @@ export const CreateClass = () => {
           </Card>
         </Col>
 
-        {/* Right Column - Lessons Table */}
+        {/* Right Column - Lessons Table with Drag and Drop */}
         <Col xs={24} md={16}>
           <Card 
             title={
@@ -594,13 +665,28 @@ export const CreateClass = () => {
             }
             extra={
               selectedClass ? (
-                <Button
-                  type="primary"
-                  icon={<PlusOutlined />}
-                  onClick={() => openLessonDrawer()}
-                >
-                  Yeni Dərs
-                </Button>
+                <Space>
+                  {indexBuilding && (
+                    <Tag icon={<WarningOutlined />} color="warning">
+                      Index qurulur... Müvəqqəti sıralama
+                    </Tag>
+                  )}
+                  {lessons.filter(l => l.order === undefined).length > 0 && (
+                    <Tag icon={<WarningOutlined />} color="orange">
+                      {lessons.filter(l => l.order === undefined).length} köhnə dərs (avtomatik yenilənir)
+                    </Tag>
+                  )}
+                  <Tag icon={<DragOutlined />} color="blue">
+                    Dərsləri sürükləyib yerlərini dəyişin
+                  </Tag>
+                  <Button
+                    type="primary"
+                    icon={<PlusOutlined />}
+                    onClick={() => openLessonDrawer()}
+                  >
+                    Yeni Dərs
+                  </Button>
+                </Space>
               ) : null
             }
             style={{ 
@@ -610,28 +696,149 @@ export const CreateClass = () => {
             }}
           >
             {selectedClass ? (
-              <Table
-                columns={lessonColumns}
-                dataSource={lessons}
-                rowKey="id"
-                loading={loading}
-                pagination={{ 
-                  pageSize: 8,
-                  showTotal: (total) => `Cəmi ${total} dərs`
-                }}
-                size="middle"
-                bordered
-                locale={{
-                  emptyText: (
-                    <div style={{ padding: '48px' }}>
-                      <FileOutlined style={{ fontSize: 48, color: '#ccc' }} />
-                      <p style={{ marginTop: '16px', color: '#999' }}>
-                        Hələ dərs yoxdur. "Yeni Dərs" düyməsini klikləyin.
-                      </p>
-                    </div>
-                  )
-                }}
-              />
+              lessons.length > 0 ? (
+                <DragDropContext onDragEnd={handleDragEnd}>
+                  <Droppable droppableId="lessons">
+                    {(provided) => (
+                      <div
+                        {...provided.droppableProps}
+                        ref={provided.innerRef}
+                      >
+                        {lessons.map((lesson, index) => (
+                          <Draggable
+                            key={lesson.id}
+                            draggableId={lesson.id}
+                            index={index}
+                          >
+                            {(provided, snapshot) => (
+                              <div
+                                ref={provided.innerRef}
+                                {...provided.draggableProps}
+                                style={{
+                                  ...provided.draggableProps.style,
+                                  marginBottom: '8px',
+                                }}
+                              >
+                                <Card
+                                  size="small"
+                                  style={{
+                                    background: snapshot.isDragging ? '#f9f9f9' : 'white',
+                                    border: snapshot.isDragging ? '2px dashed #1890ff' : '1px solid #f0f0f0',
+                                    boxShadow: snapshot.isDragging ? '0 4px 12px rgba(0,0,0,0.15)' : 'none',
+                                    opacity: lesson.order === undefined ? 0.8 : 1,
+                                  }}
+                                  bodyStyle={{ padding: '12px' }}
+                                >
+                                  <Row align="middle" gutter={16}>
+                                    <Col span={1}>
+                                      <div {...provided.dragHandleProps}>
+                                        <DragOutlined style={{ 
+                                          fontSize: '18px', 
+                                          color: '#999',
+                                          cursor: 'grab'
+                                        }} />
+                                      </div>
+                                    </Col>
+                                    <Col span={1}>
+                                      <Tag color={lesson.order === undefined ? "orange" : "blue"}>
+                                        {index + 1}
+                                      </Tag>
+                                    </Col>
+                                    <Col span={6}>
+                                      <Space>
+                                        <ReadOutlined style={{ color: '#1890ff' }} />
+                                        <Text strong>{lesson.title || ''}</Text>
+                                        {lesson.order === undefined && (
+                                          <Tooltip title="Köhnə dərs, yenilənir...">
+                                            <WarningOutlined style={{ color: '#faad14' }} />
+                                          </Tooltip>
+                                        )}
+                                      </Space>
+                                    </Col>
+                                    <Col span={3}>
+                                      <Badge 
+                                        color={lesson.status === 'published' ? 'green' : lesson.status === 'draft' ? 'orange' : 'default'}
+                                        text={lesson.status === 'published' ? 'Dərc edilib' : lesson.status === 'draft' ? 'Qaralama' : 'Arxiv'} 
+                                      />
+                                    </Col>
+                                    <Col span={4}>
+                                      <Text type="secondary">
+                                        {lesson.createdAt ? new Date(lesson.createdAt.toDate()).toLocaleDateString('az-AZ') : '-'}
+                                      </Text>
+                                    </Col>
+                                    <Col span={9} style={{ textAlign: 'right' }}>
+                                      <Space size="middle">
+                                        <Tooltip title="Məzmunu göstər">
+                                          <Button 
+                                            type="text"
+                                            size="small"
+                                            icon={<EyeOutlined />}
+                                            onClick={() => showContentPreview(lesson)}
+                                          />
+                                        </Tooltip>
+                                        <Tooltip title="HTML kodu göstər">
+                                          <Button 
+                                            type="text"
+                                            size="small"
+                                            icon={<CodeOutlined />}
+                                            onClick={() => {
+                                              Modal.info({
+                                                title: `${lesson.title} - HTML Kodu`,
+                                                width: 900,
+                                                content: (
+                                                  <div style={{ maxHeight: '600px', overflow: 'auto' }}>
+                                                    <HtmlCodeShow 
+                                                      data={{
+                                                        previewHtml: lesson.content || '',
+                                                        onChange: () => {}
+                                                      }} 
+                                                    />
+                                                  </div>
+                                                ),
+                                                okText: 'Bağla'
+                                              });
+                                            }}
+                                          />
+                                        </Tooltip>
+                                        <Tooltip title="Redaktə et">
+                                          <Button
+                                            type="text"
+                                            size="small"
+                                            icon={<EditOutlined />}
+                                            onClick={() => openLessonDrawer(lesson)}
+                                          />
+                                        </Tooltip>
+                                        <Tooltip title="Sil">
+                                          <Popconfirm
+                                            title="Bu dərsi silmək istədiyinizə əminsiniz?"
+                                            onConfirm={() => handleDeleteLesson(lesson.id)}
+                                            okText="Bəli"
+                                            cancelText="Xeyr"
+                                          >
+                                            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+                                          </Popconfirm>
+                                        </Tooltip>
+                                      </Space>
+                                    </Col>
+                                  </Row>
+                                </Card>
+                              </div>
+                            )}
+                          </Draggable>
+                        ))}
+                        {provided.placeholder}
+                      </div>
+                    )}
+                  </Droppable>
+                </DragDropContext>
+              ) : (
+                <div style={{ textAlign: 'center', padding: '48px' }}>
+                  <FileOutlined style={{ fontSize: 48, color: '#ccc' }} />
+                  <p style={{ marginTop: '16px', color: '#999' }}>
+                    Hələ dərs yoxdur. "Yeni Dərs" düyməsini klikləyin.
+                  </p>
+                </div>
+              )
             ) : (
               <div style={{ textAlign: 'center', padding: '80px 48px' }}>
                 <TeamOutlined style={{ fontSize: 64, color: '#ccc' }} />
@@ -663,6 +870,13 @@ export const CreateClass = () => {
           form={form}
           layout="vertical"
           onFinish={handleCreateClass}
+          initialValues={{
+            name: '',
+            description: '',
+            grade: '',
+            subject: '',
+            tags: []
+          }}
         >
           <Form.Item
             name="name"
@@ -691,6 +905,18 @@ export const CreateClass = () => {
             label="Fənn"
           >
             <Input placeholder="Məsələn: Riyaziyyat, Fizika, Tarix" />
+          </Form.Item>
+
+          <Form.Item
+            name="tags"
+            label="Teqlər"
+          >
+            <Select
+              mode="tags"
+              style={{ width: '100%' }}
+              placeholder="Teqlər daxil edin"
+              allowClear
+            />
           </Form.Item>
 
           <Form.Item>
@@ -743,6 +969,10 @@ export const CreateClass = () => {
           form={lessonForm}
           layout="vertical"
           onFinish={handleCreateLesson}
+          initialValues={{
+            title: '',
+            status: 'draft'
+          }}
         >
           <Form.Item
             name="title"
