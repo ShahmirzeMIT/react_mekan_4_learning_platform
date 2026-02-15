@@ -183,6 +183,12 @@ const previewStyles = `
     border-radius: 8px;
     margin: 0;
   }
+  .exam-preview-content {
+    margin: 10px 0;
+  }
+  .exam-preview-content p {
+    margin: 5px 0;
+  }
 `;
 
 // Main Component
@@ -803,7 +809,7 @@ export const CreatingTest = () => {
           setEditingExam(null);
           resetExamForm();
         }}
-        width={1000}
+        width={1300}
         footer={[
           <Button key="back" onClick={() => setIsExamModalVisible(false)}>
             Ləğv et
@@ -859,11 +865,21 @@ export const CreatingTest = () => {
               </Row>
 
               <Row gutter={16}>
-                <Col span={24}>
-                  <Form.Item label="Təsvir (HTML)">
+                <Col span={12}>
+                  <Form.Item label="Təsvir (Dizayn)">
                     <HtmlEditorComp
                       data={{
                         value: examDescription,
+                        onChange: setExamDescription
+                      }} 
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="Təsvir (HTML)">
+                    <HtmlCodeShow
+                      data={{
+                        previewHtml: examDescription,
                         onChange: setExamDescription
                       }} 
                     />
@@ -977,6 +993,29 @@ export const CreatingTest = () => {
                         >
                           <Button type="text" danger icon={<DeleteOutlined />} />
                         </Popconfirm>
+                      </Tooltip>,
+                      <Tooltip title="HTML Kodu">
+                        <Button
+                          type="text"
+                          icon={<CodeOutlined />}
+                          onClick={() => {
+                            Modal.info({
+                              title: `Sual ${index + 1} - HTML Kodu`,
+                              width: 900,
+                              content: (
+                                <div style={{ maxHeight: '600px', overflow: 'auto' }}>
+                                  <HtmlCodeShow
+                                    data={{
+                                      previewHtml: question.text,
+                                      onChange: () => {}
+                                    }} 
+                                  />
+                                </div>
+                              ),
+                              okText: 'Bağla'
+                            });
+                          }}
+                        />
                       </Tooltip>
                     ]}
                   >
@@ -996,10 +1035,10 @@ export const CreatingTest = () => {
                       }
                       description={
                         <div>
-                          <div 
-                            dangerouslySetInnerHTML={{ __html: question.text }} 
-                            style={{ marginBottom: 8 }}
-                          />
+                          <style>{previewStyles}</style>
+                          <div className="exam-preview-content">
+                            <div dangerouslySetInnerHTML={{ __html: question.text }} />
+                          </div>
                           
                           {question.type === QuestionType.MULTIPLE_CHOICE && question.options && (
                             <div>
@@ -1208,6 +1247,53 @@ export const CreatingTest = () => {
               }} 
             />
           </Form.Item>
+            <Form.Item label="" required>
+            <HtmlCodeShow 
+              data={{
+                previewHtml: questionText,
+                onChange: setQuestionText
+              }} 
+            />
+          </Form.Item>
+
+          {/* Live Preview of Question Text */}
+          {questionText && (
+            <Card 
+              title="Canlı Önizləmə" 
+              size="small" 
+              style={{ marginBottom: 16, background: '#f5f5f5' }}
+              extra={
+                <Button 
+                  type="link" 
+                  icon={<CodeOutlined />}
+                  onClick={() => {
+                    Modal.info({
+                      title: 'HTML Kodu',
+                      width: 900,
+                      content: (
+                        <div style={{ maxHeight: '600px', overflow: 'auto' }}>
+                          <HtmlCodeShow
+                            data={{
+                              previewHtml: questionText,
+                              onChange: () => {}
+                            }} 
+                          />
+                        </div>
+                      ),
+                      okText: 'Bağla'
+                    });
+                  }}
+                >
+                  HTML Kodunu Göstər
+                </Button>
+              }
+            >
+              <style>{previewStyles}</style>
+              <div className="exam-preview-content">
+                <div dangerouslySetInnerHTML={{ __html: questionText }} />
+              </div>
+            </Card>
+          )}
 
           <Form.Item label="Şəkil URL (opsiyonel)">
             <Input
