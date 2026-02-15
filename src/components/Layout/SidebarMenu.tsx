@@ -5,7 +5,8 @@ import {
   BuildOutlined,
   UserOutlined,
   BookOutlined,
-  FormOutlined
+  FormOutlined,
+  UnlockOutlined
 } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 
@@ -63,6 +64,11 @@ const SidebarMenu = ({
       key: "test-hazirla",
       icon:<FormOutlined/>,
       label: "Test Hazirla",
+    },
+      {   
+      key: "test-icazələri",
+      icon:<UnlockOutlined/>,
+      label: "Test İcazələri",
     }
 
   ];
