@@ -27,7 +27,10 @@ import {
   Statistic,
   Empty,
   Alert,
-  Descriptions
+  Descriptions,
+  InputNumber,
+  Spin,
+  Switch
 } from 'antd';
 import {
   PlusOutlined,
@@ -53,7 +56,10 @@ import {
   PauseCircleOutlined,
   ClockCircleOutlined,
   BarChartOutlined,
-  CodeOutlined
+  CodeOutlined,
+  RobotOutlined,
+  ThunderboltOutlined,
+  GlobalOutlined
 } from '@ant-design/icons';
 import {
   collection,
@@ -72,6 +78,7 @@ import { db } from '@/config/firebase';
 import { v4 as uuidv4 } from 'uuid';
 import HtmlCodeShow from '../CreateClass/HtmlCodeShow';
 import HtmlEditorComp from '../CreateClass/HtmlEditorComp';
+import axios from 'axios';
 
 const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
@@ -93,6 +100,24 @@ const QuestionType = {
   TRUE_FALSE: 'true_false',
   SHORT_ANSWER: 'short_answer'
 };
+
+// Languages for AI generation
+const Languages = {
+  AZ: 'az',
+  EN: 'en',
+  RU: 'ru'
+};
+
+// Language names for display
+const LanguageNames = {
+  [Languages.AZ]: 'Azərbaycan dili',
+  [Languages.EN]: 'English',
+  [Languages.RU]: 'Русский'
+};
+
+// Gemini API configuration
+const GEMINI_API_KEY = 'AIzaSyCSYojEExI98cnAmn4fsg7LbjnHfaEd6c4';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 // Custom styles for preview (same as CreateClass)
 const previewStyles = `
@@ -199,9 +224,11 @@ export const CreatingTest = () => {
   const [isExamModalVisible, setIsExamModalVisible] = useState(false);
   const [isQuestionDrawerVisible, setIsQuestionDrawerVisible] = useState(false);
   const [isPreviewModalVisible, setIsPreviewModalVisible] = useState(false);
+  const [isAIGeneratorVisible, setIsAIGeneratorVisible] = useState(false);
   const [editingExam, setEditingExam] = useState(null);
   const [editingQuestion, setEditingQuestion] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [aiGenerating, setAiGenerating] = useState(false);
   const [currentStep, setCurrentStep] = useState(0);
   const [form] = Form.useForm();
   const [questionForm] = Form.useForm();
@@ -223,6 +250,14 @@ export const CreatingTest = () => {
   const [questionCorrectAnswer, setQuestionCorrectAnswer] = useState('');
   const [questionCorrectAnswers, setQuestionCorrectAnswers] = useState([]);
   const [questionImage, setQuestionImage] = useState('');
+
+  // AI Generator state
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiQuestionCount, setAiQuestionCount] = useState(5);
+  const [aiQuestionType, setAiQuestionType] = useState('mixed');
+  const [aiDifficulty, setAiDifficulty] = useState('medium');
+  const [aiLanguage, setAiLanguage] = useState(Languages.AZ); // Default to Azerbaijani
+  const [includeExplanations, setIncludeExplanations] = useState(true);
 
   // Fetch exams on mount with real-time updates
   useEffect(() => {
@@ -290,6 +325,147 @@ export const CreatingTest = () => {
     setQuestionCorrectAnswers([]);
     setQuestionImage('');
     questionForm.resetFields();
+  };
+
+  // Get language instruction for AI prompt
+  const getLanguageInstruction = () => {
+    switch(aiLanguage) {
+      case Languages.AZ:
+        return 'Bütün sualları, variantları və izahları AZƏRBAYCAN DİLİNDƏ yaz.';
+      case Languages.EN:
+        return 'Write all questions, options, and explanations in ENGLISH.';
+      case Languages.RU:
+        return 'Напишите все вопросы, варианты и объяснения на РУССКОМ ЯЗЫКЕ.';
+      default:
+        return 'Write all questions, options, and explanations in ENGLISH.';
+    }
+  };
+
+  // Generate questions using Gemini AI
+  const generateQuestionsWithAI = async () => {
+    if (!aiPrompt) {
+      message.warning('Zəhmət olmasa sual mövzusunu daxil edin');
+      return;
+    }
+
+    setAiGenerating(true);
+
+    try {
+      // Prepare the prompt for Gemini
+      const typeInstruction = aiQuestionType === 'mixed' 
+        ? 'müxtəlif tipli (tək seçim, çox seçim, doğru/yanlış, açıq sual)' 
+        : aiQuestionType === 'multiple_choice' 
+          ? 'tək seçim' 
+          : aiQuestionType === 'checkbox' 
+            ? 'çox seçim' 
+            : aiQuestionType === 'true_false' 
+              ? 'doğru/yanlış' 
+              : 'açıq sual';
+
+      const difficultyInstruction = aiDifficulty === 'easy' 
+        ? 'asan' 
+        : aiDifficulty === 'medium' 
+          ? 'orta' 
+          : 'çətin';
+
+      const explanationInstruction = includeExplanations 
+        ? 'Hər sual üçün izahat (explanation) əlavə et.' 
+        : 'İzahat əlavə etmə.';
+
+      const languageInstruction = getLanguageInstruction();
+
+      const prompt = `
+        ${languageInstruction}
+        
+        Mənə ${aiQuestionCount} ədəd ${difficultyInstruction} çətinlik səviyyəsində, ${typeInstruction} suallar yaradın.
+        Mövzu: ${aiPrompt}
+        
+        ${explanationInstruction}
+        
+        Hər sual üçün aşağıdakı formatda JSON array qaytarın:
+        [
+          {
+            "text": "Sual mətni (HTML formatında ola bilər)",
+            "type": "multiple_choice" və ya "checkbox" və ya "true_false" və ya "open_ended",
+            "points": 10,
+            "options": ["Variant 1", "Variant 2", "Variant 3", "Variant 4"] (yalnız multiple_choice və checkbox üçün),
+            "correctAnswer": "Düzgün cavab" (multiple_choice və true_false üçün),
+            "correctAnswers": ["Düzgün cavab 1", "Düzgün cavab 2"] (checkbox üçün),
+            "explanation": "Cavabın izahı" ${includeExplanations ? '(mütləq əlavə et)' : '(opsiyonel)'}
+          }
+        ]
+        
+        Sadəcə JSON array qaytarın, əlavə mətn yazmayın.
+        
+        Xahiş edirəm əmin olun ki, bütün suallar, variantlar və izahlar ${LanguageNames[aiLanguage]} dilindədir.
+      `;
+
+      // Call Gemini API
+      const response = await axios.post(
+        `${GEMINI_API_URL}?key=${GEMINI_API_KEY}`,
+        {
+          contents: [
+            {
+              parts: [
+                {
+                  text: prompt
+                }
+              ]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 8192
+          }
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      // Parse the response
+      const generatedText = response.data.candidates[0].content.parts[0].text;
+      
+      // Extract JSON from the response
+      const jsonMatch = generatedText.match(/\[[\s\S]*\]/);
+      if (!jsonMatch) {
+        throw new Error('JSON formatı tapılmadı');
+      }
+
+      const generatedQuestions = JSON.parse(jsonMatch[0]);
+
+      // Convert to our question format
+      const newQuestions = generatedQuestions.map(q => ({
+        id: uuidv4(),
+        text: q.text,
+        type: q.type,
+        points: q.points || 10,
+        options: q.options || [],
+        correctAnswer: q.correctAnswer || '',
+        correctAnswers: q.correctAnswers || [],
+        explanation: q.explanation || '',
+        language: aiLanguage,
+        createdAt: Timestamp.now()
+      }));
+
+      // Add to existing questions
+      setQuestions([...questions, ...newQuestions]);
+      
+      message.success(`${newQuestions.length} sual uğurla yaradıldı (${LanguageNames[aiLanguage]})`);
+      setIsAIGeneratorVisible(false);
+      setAiPrompt('');
+      setAiQuestionCount(5);
+      
+    } catch (error) {
+      console.error('AI generation error:', error);
+      message.error('AI sualları yaradılarkən xəta: ' + error.message);
+    } finally {
+      setAiGenerating(false);
+    }
   };
 
   const handleSaveExam = async () => {
@@ -564,7 +740,7 @@ export const CreatingTest = () => {
     {
       title: 'Əməliyyatlar',
       key: 'actions',
-      width: 250,
+      width: 300,
       render: (_, record) => (
         <Space>
           <Tooltip title="Önizləmə">
@@ -594,6 +770,24 @@ export const CreatingTest = () => {
                   ),
                   okText: 'Bağla'
                 });
+              }}
+            />
+          </Tooltip>
+          <Tooltip title="AI ilə Təkmilləşdir">
+            <Button
+              type="text"
+              icon={<RobotOutlined style={{ color: '#722ed1' }} />}
+              onClick={() => {
+                setEditingExam(record);
+                setExamTitle(record.title);
+                setExamDescription(record.description || '');
+                setExamClass(record.classId);
+                setExamDuration(record.duration || 60);
+                setExamPassingScore(record.passingScore || 50);
+                setExamStatus(record.status || 'draft');
+                setQuestions(record.questions || []);
+                setIsExamModalVisible(true);
+                setCurrentStep(1);
               }}
             />
           </Tooltip>
@@ -721,6 +915,11 @@ export const CreatingTest = () => {
                 <Tag color="blue" style={{ marginLeft: 8 }}>
                   {getQuestionTypeLabel(question.type)}
                 </Tag>
+                {question.language && (
+                  <Tag color="purple" style={{ marginLeft: 4 }}>
+                    <GlobalOutlined /> {LanguageNames[question.language]}
+                  </Tag>
+                )}
               </Title>
               
               {/* Fixed: Use proper div with className and dangerouslySetInnerHTML */}
@@ -790,6 +989,16 @@ export const CreatingTest = () => {
                 <Alert
                   message="Açıq sual"
                   description="Bu sualın cavabı əl ilə yoxlanılmalıdır."
+                  type="info"
+                  showIcon
+                  style={{ marginTop: 16 }}
+                />
+              )}
+
+              {question.explanation && (
+                <Alert
+                  message="İzah"
+                  description={question.explanation}
                   type="info"
                   showIcon
                   style={{ marginTop: 16 }}
@@ -957,18 +1166,31 @@ export const CreatingTest = () => {
 
         {currentStep === 1 && (
           <div>
-            <div style={{ marginBottom: 24, textAlign: 'right' }}>
-              <Button
-                type="primary"
-                icon={<PlusOutlined />}
-                onClick={() => {
-                  setEditingQuestion(null);
-                  resetQuestionForm();
-                  setIsQuestionDrawerVisible(true);
-                }}
-              >
-                Sual Əlavə Et
-              </Button>
+            <div style={{ marginBottom: 24, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <Space>
+                <Button
+                  type="primary"
+                  icon={<PlusOutlined />}
+                  onClick={() => {
+                    setEditingQuestion(null);
+                    resetQuestionForm();
+                    setIsQuestionDrawerVisible(true);
+                  }}
+                >
+                  Sual Əlavə Et
+                </Button>
+                <Button
+                  type="primary"
+                  icon={<RobotOutlined />}
+                  style={{ background: '#722ed1', borderColor: '#722ed1' }}
+                  onClick={() => setIsAIGeneratorVisible(true)}
+                >
+                  AI ilə Sual Yarat
+                </Button>
+              </Space>
+              <Tag color="purple" icon={<ThunderboltOutlined />}>
+                AI ilə sual yaratmaq üçün düyməyə klikləyin
+              </Tag>
             </div>
 
             {questions.length > 0 ? (
@@ -1031,6 +1253,16 @@ export const CreatingTest = () => {
                           <Text strong>Sual {index + 1}</Text>
                           <Tag color="green">{question.points || 10} bal</Tag>
                           <Tag color="blue">{getQuestionTypeLabel(question.type)}</Tag>
+                          {question.language && (
+                            <Tag color="purple">
+                              <GlobalOutlined /> {LanguageNames[question.language]}
+                            </Tag>
+                          )}
+                          {question.explanation && (
+                            <Tooltip title={question.explanation}>
+                              <QuestionCircleOutlined style={{ color: '#1890ff' }} />
+                            </Tooltip>
+                          )}
                         </Space>
                       }
                       description={
@@ -1094,6 +1326,18 @@ export const CreatingTest = () => {
                               />
                             </div>
                           )}
+
+                          {question.explanation && (
+                            <div style={{ marginTop: 8 }}>
+                              <Alert
+                                message="İzah"
+                                description={question.explanation}
+                                type="info"
+                                showIcon
+                                style={{ fontSize: 12 }}
+                              />
+                            </div>
+                          )}
                         </div>
                       }
                     />
@@ -1105,17 +1349,29 @@ export const CreatingTest = () => {
                 image={Empty.PRESENTED_IMAGE_SIMPLE}
                 description="Hələ sual əlavə edilməyib"
               >
-                <Button 
-                  type="primary" 
-                  icon={<PlusOutlined />}
-                  onClick={() => {
-                    setEditingQuestion(null);
-                    resetQuestionForm();
-                    setIsQuestionDrawerVisible(true);
-                  }}
-                >
-                  İlk Sualı Əlavə Et
-                </Button>
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Button 
+                    type="primary" 
+                    icon={<PlusOutlined />}
+                    onClick={() => {
+                      setEditingQuestion(null);
+                      resetQuestionForm();
+                      setIsQuestionDrawerVisible(true);
+                    }}
+                    block
+                  >
+                    İlk Sualı Əlavə Et
+                  </Button>
+                  <Button 
+                    type="primary" 
+                    icon={<RobotOutlined />}
+                    style={{ background: '#722ed1', borderColor: '#722ed1' }}
+                    onClick={() => setIsAIGeneratorVisible(true)}
+                    block
+                  >
+                    AI ilə Sual Yarat
+                  </Button>
+                </Space>
               </Empty>
             )}
           </div>
@@ -1247,7 +1503,7 @@ export const CreatingTest = () => {
               }} 
             />
           </Form.Item>
-            <Form.Item label="" required>
+          <Form.Item label="" required>
             <HtmlCodeShow 
               data={{
                 previewHtml: questionText,
@@ -1392,6 +1648,139 @@ export const CreatingTest = () => {
           )}
         </Form>
       </Drawer>
+
+      {/* AI Question Generator Modal */}
+      <Modal
+        title={
+          <Space>
+            <RobotOutlined style={{ color: '#722ed1' }} />
+            <span>AI ilə Sual Yaradılması</span>
+          </Space>
+        }
+        open={isAIGeneratorVisible}
+        onCancel={() => setIsAIGeneratorVisible(false)}
+        footer={[
+          <Button key="cancel" onClick={() => setIsAIGeneratorVisible(false)}>
+            Ləğv et
+          </Button>,
+          <Button
+            key="generate"
+            type="primary"
+            icon={<ThunderboltOutlined />}
+            style={{ background: '#722ed1', borderColor: '#722ed1' }}
+            onClick={generateQuestionsWithAI}
+            loading={aiGenerating}
+          >
+            {aiGenerating ? 'Yaradılır...' : 'Sualları Yarad'}
+          </Button>
+        ]}
+        width={700}
+      >
+        <Spin spinning={aiGenerating}>
+          <Form layout="vertical">
+            <Form.Item label="Sual Mövzusu / Prompt" required>
+              <TextArea
+                rows={4}
+                placeholder="Məsələn: Riyaziyyat - Törəmə mövzusunda 5 sual yarat"
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+              />
+            </Form.Item>
+
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item label="Dil" required>
+                  <Select 
+                    value={aiLanguage} 
+                    onChange={setAiLanguage}
+                    size="large"
+                  >
+                    <Option value={Languages.AZ}>
+                      <Space>
+                        <GlobalOutlined /> Azərbaycan dili
+                      </Space>
+                    </Option>
+                    <Option value={Languages.EN}>
+                      <Space>
+                        <GlobalOutlined /> English
+                      </Space>
+                    </Option>
+                    <Option value={Languages.RU}>
+                      <Space>
+                        <GlobalOutlined /> Русский
+                      </Space>
+                    </Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="Sual Sayı">
+                  <InputNumber
+                    min={1}
+                    max={20}
+                    value={aiQuestionCount}
+                    onChange={setAiQuestionCount}
+                    style={{ width: '100%' }}
+                  />
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Row gutter={16}>
+              <Col span={12}>
+                <Form.Item label="Çətinlik">
+                  <Select value={aiDifficulty} onChange={setAiDifficulty}>
+                    <Option value="easy">Asan</Option>
+                    <Option value="medium">Orta</Option>
+                    <Option value="hard">Çətin</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+              <Col span={12}>
+                <Form.Item label="Sual Tipi">
+                  <Select value={aiQuestionType} onChange={setAiQuestionType}>
+                    <Option value="mixed">Qarışıq</Option>
+                    <Option value="multiple_choice">Tək seçim</Option>
+                    <Option value="checkbox">Çox seçim</Option>
+                    <Option value="true_false">Doğru/Yanlış</Option>
+                    <Option value="open_ended">Açıq sual</Option>
+                  </Select>
+                </Form.Item>
+              </Col>
+            </Row>
+
+            <Form.Item label="Əlavə Seçimlər">
+              <Space direction="vertical">
+                <Switch
+                  checked={includeExplanations}
+                  onChange={setIncludeExplanations}
+                  checkedChildren="İzahlı"
+                  unCheckedChildren="İzahsız"
+                />
+                <Text type="secondary">
+                  {includeExplanations 
+                    ? 'Hər sual üçün izahat əlavə ediləcək' 
+                    : 'Suallar izahsız yaradılacaq'}
+                </Text>
+              </Space>
+            </Form.Item>
+
+            <Divider />
+
+            <Alert
+              message="AI Sualları Haqqında"
+              description={
+                <div>
+                  <p>AI tərəfindən yaradılan sualları yoxlamaq və redaktə etmək tövsiyə olunur. Suallar dəqiq ola bilər, lakin yenə də yoxlamadan keçirin.</p>
+                  <p><GlobalOutlined /> Seçdiyiniz dildə suallar yaradılacaq: <Tag color="purple">{LanguageNames[aiLanguage]}</Tag></p>
+                </div>
+              }
+              type="info"
+              showIcon
+            />
+          </Form>
+        </Spin>
+      </Modal>
     </Layout>
   );
 };

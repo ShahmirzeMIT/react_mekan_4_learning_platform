@@ -21,6 +21,15 @@ import {
   Badge,
   List,
   Avatar,
+  InputNumber,
+  Alert,
+  Steps,
+  Checkbox,
+  Radio,
+  Spin,
+  Progress,
+  Tabs,
+  Image
 } from 'antd';
 import {
   PlusOutlined,
@@ -35,7 +44,19 @@ import {
   ReadOutlined,
   CodeOutlined,
   DragOutlined,
-  WarningOutlined
+  WarningOutlined,
+  RobotOutlined,
+  ThunderboltOutlined,
+  QuestionCircleOutlined,
+  CheckCircleOutlined,
+  CloseCircleOutlined,
+  SettingOutlined,
+  GlobalOutlined,
+  ExperimentOutlined,
+  FileTextOutlined,
+  CopyOutlined,
+  DownloadOutlined,
+  PictureOutlined
 } from '@ant-design/icons';
 import {
   collection,
@@ -54,10 +75,13 @@ import { db } from '@/config/firebase';
 import HtmlEditorComp from './HtmlEditorComp';
 import HtmlCodeShow from './HtmlCodeShow';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
+import axios from 'axios';
 
-const { Title, Text } = Typography;
+const { Title, Text, Paragraph } = Typography;
 const { TextArea } = Input;
 const { Option } = Select;
+const { Step } = Steps;
+const { TabPane } = Tabs;
 
 // Collection names with platform_ prefix
 const COLLECTIONS = {
@@ -65,74 +89,78 @@ const COLLECTIONS = {
   LESSONS: 'platform_lessons'
 };
 
-// Custom styles for preview
-const previewStyles = `
-  .lesson-preview {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-    line-height: 1.6;
-    color: #333;
-    padding: 20px;
-  }
-  .lesson-preview h1 {
-    color: #2c3e50;
-    border-bottom: 2px solid #3498db;
-    padding-bottom: 10px;
-    margin-top: 0;
-    font-size: 28px;
-  }
-  .lesson-preview h2 {
-    color: #2c3e50;
-    margin-top: 30px;
-    font-size: 24px;
-  }
-  .lesson-preview .info-box {
-    background-color: #f8f9fa;
-    padding: 15px;
-    border-radius: 8px;
-    margin: 20px 0;
-  }
-  .lesson-preview img {
-    max-width: 100%;
-    height: auto;
-    border-radius: 8px;
-    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-    margin: 20px 0;
-  }
-  .lesson-preview ul.custom-list {
-    list-style-type: none;
-    padding: 0;
-  }
-  .lesson-preview ul.custom-list li {
-    background: #e8f4f8;
-    margin: 10px 0;
-    padding: 12px;
-    border-radius: 5px;
-  }
-  .lesson-preview .image-grid {
-    display: flex;
-    gap: 20px;
-    margin: 30px 0;
-  }
-  .lesson-preview .image-item {
-    flex: 1;
-    text-align: center;
-  }
-  .lesson-preview .image-item img {
-    max-width: 100%;
-    height: 200px;
-    object-fit: cover;
-    border-radius: 8px;
-    margin: 0;
-  }
-  .lesson-preview blockquote {
-    background: #2c3e50;
-    color: white;
-    padding: 20px;
-    border-radius: 8px;
-    font-style: italic;
-    margin: 30px 0;
-  }
-`;
+// Gemini API configuration
+const GEMINI_API_KEY = 'AIzaSyCSYojEExI98cnAmn4fsg7LbjnHfaEd6c4';
+const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
+
+// Şəkil URL-ləri üçün placeholder (picsum photos - pulsuz şəkillər)
+const getRandomImageUrl = (width = 800, height = 400, id = 1) => {
+  return `https://picsum.photos/${width}/${height}?random=${id}`;
+};
+
+// Sadə və öyrədici dərs formatı - FOKUS DƏRS + ŞƏKİLLƏR
+const getLessonHTMLTemplate = (title, content, examples, exercises, keywords, images = []) => {
+  // Şəkilləri HTML-ə əlavə et
+  const imagesHTML = images.length > 0 ? `
+    <h2 style="font-size: 22px; color: #2c3e50; margin-top: 30px;">Şəkilli İzahlar</h2>
+    <div style="display: flex; flex-wrap: wrap; gap: 20px; margin: 20px 0;">
+      ${images.map((img, idx) => `
+        <div style="flex: 1; min-width: 300px; text-align: center;">
+          <img src="${img.url}" alt="${img.alt || 'Şəkil'}" style="max-width: 100%; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+          ${img.caption ? `<p style="margin-top: 8px; color: #666; font-style: italic;">${img.caption}</p>` : ''}
+        </div>
+      `).join('')}
+    </div>
+  ` : '';
+
+  return `
+    <div style="font-family: 'Segoe UI', Roboto, Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; line-height: 1.6; color: #333;">
+      
+      <h1 style="font-size: 28px; color: #2c3e50; border-bottom: 2px solid #3498db; padding-bottom: 10px; margin-top: 0;">${title}</h1>
+      
+      <div style="background-color: #f8f9fa; padding: 15px; border-radius: 5px; margin: 20px 0; border-left: 4px solid #3498db;">
+        <strong style="color: #2c3e50;">📚 Bu dərsdə öyrənəcəksiniz:</strong>
+        <ul style="margin-top: 10px; padding-left: 20px;">
+          <li>${content.substring(0, 150)}...</li>
+        </ul>
+      </div>
+      
+      <h2 style="font-size: 22px; color: #2c3e50; margin-top: 30px;">Dərsin Məzmunu</h2>
+      <div style="background: white; padding: 15px; border-radius: 5px;">
+        ${content}
+      </div>
+      
+      ${imagesHTML}
+      
+      ${examples ? `
+        <h2 style="font-size: 22px; color: #2c3e50; margin-top: 30px;">Nümunələr</h2>
+        <div style="background-color: #f0f9f0; padding: 15px; border-radius: 5px; border-left: 4px solid #27ae60;">
+          <strong style="color: #27ae60;">📝 Nümunələr:</strong>
+          <div style="margin-top: 10px;">${examples}</div>
+        </div>
+      ` : ''}
+      
+      ${exercises ? `
+        <h2 style="font-size: 22px; color: #2c3e50; margin-top: 30px;">Tapşırıqlar</h2>
+        <div style="background-color: #f0f5ff; padding: 15px; border-radius: 5px; border-left: 4px solid #3498db;">
+          <strong style="color: #3498db;">✍️ Tapşırıqlar:</strong>
+          <div style="margin-top: 10px;">${exercises}</div>
+        </div>
+      ` : ''}
+      
+      ${keywords && keywords.length > 0 ? `
+        <h2 style="font-size: 22px; color: #2c3e50; margin-top: 30px;">Açar Sözlər</h2>
+        <div style="background: #f8f9fa; padding: 10px; border-radius: 5px;">
+          ${keywords.map(k => `<span style="display: inline-block; background: #e9ecef; padding: 5px 10px; margin: 5px; border-radius: 3px; font-size: 14px;">${k}</span>`).join('')}
+        </div>
+      ` : ''}
+      
+      <div style="margin-top: 40px; padding-top: 20px; border-top: 1px solid #eee; text-align: center; color: #7f8c8d; font-size: 14px;">
+        <p>Bu dərs AI tərəfindən yaradılıb və öyrənmək üçün nəzərdə tutulub.</p>
+      </div>
+    </div>
+  `;
+};
 
 // Main Component
 export const CreateClass = () => {
@@ -141,13 +169,29 @@ export const CreateClass = () => {
   const [lessons, setLessons] = useState([]);
   const [isClassModalVisible, setIsClassModalVisible] = useState(false);
   const [isLessonDrawerVisible, setIsLessonDrawerVisible] = useState(false);
+  const [isAIGeneratorVisible, setIsAIGeneratorVisible] = useState(false);
   const [editingClass, setEditingClass] = useState(null);
   const [editingLesson, setEditingLesson] = useState(null);
   const [loading, setLoading] = useState(false);
+  const [aiGenerating, setAiGenerating] = useState(false);
+  const [aiProgress, setAiProgress] = useState(0);
   const [indexBuilding, setIndexBuilding] = useState(false);
   const [form] = Form.useForm();
   const [lessonForm] = Form.useForm();
   const [lessonContent, setLessonContent] = useState('');
+
+  // AI Generator state
+  const [aiPrompt, setAiPrompt] = useState('');
+  const [aiLessonCount, setAiLessonCount] = useState(3);
+  const [aiDifficulty, setAiDifficulty] = useState('medium');
+  const [aiIncludeExamples, setAiIncludeExamples] = useState(true);
+  const [aiIncludeExercises, setAiIncludeExercises] = useState(true);
+  const [aiIncludeImages, setAiIncludeImages] = useState(true);
+  const [aiLanguage, setAiLanguage] = useState('az');
+  const [aiLessonType, setAiLessonType] = useState('theory');
+  const [currentStep, setCurrentStep] = useState(0);
+  const [generatedLessons, setGeneratedLessons] = useState([]);
+  const [selectedLessons, setSelectedLessons] = useState([]);
 
   // Fetch classes on component mount with real-time updates
   useEffect(() => {
@@ -177,7 +221,6 @@ export const CreateClass = () => {
 
     const lessonsRef = collection(db, COLLECTIONS.LESSONS);
     
-    // Try to use ordered query first
     try {
       const q = query(
         lessonsRef,
@@ -195,10 +238,8 @@ export const CreateClass = () => {
         setLessons(lessonsData);
         setIndexBuilding(false);
       }, (error) => {
-        // If index is building, fall back to client-side sorting
         if (error.message.includes('index is currently building')) {
           setIndexBuilding(true);
-          // Fallback query without orderBy
           const fallbackQuery = query(
             lessonsRef,
             where('classId', '==', selectedClass.id)
@@ -211,17 +252,13 @@ export const CreateClass = () => {
               key: doc.id
             }));
             
-            // Sort client-side by order field (if exists) or by createdAt
             const sortedData = lessonsData
               .sort((a, b) => {
-                // If both have order, sort by order
                 if (a.order !== undefined && b.order !== undefined) {
                   return a.order - b.order;
                 }
-                // If one has order and other doesn't, prioritize those with order
                 if (a.order !== undefined) return -1;
                 if (b.order !== undefined) return 1;
-                // If neither has order, sort by createdAt
                 return (b.createdAt?.toDate?.() || 0) - (a.createdAt?.toDate?.() || 0);
               })
               .map((item, index) => ({ ...item, sno: index + 1 }));
@@ -246,11 +283,267 @@ export const CreateClass = () => {
     }
   }, [selectedClass]);
 
+  // Generate lessons using Gemini AI
+  const generateLessonsWithAI = async () => {
+    if (!aiPrompt) {
+      message.warning('Zəhmət olmasa dərs mövzusunu daxil edin');
+      return;
+    }
+
+    if (!selectedClass) {
+      message.warning('Zəhmət olmasa əvvəlcə bir sinif seçin');
+      return;
+    }
+
+    setAiGenerating(true);
+    setAiProgress(0);
+    setGeneratedLessons([]);
+
+    try {
+      const difficultyText = aiDifficulty === 'easy' ? 'asan' : aiDifficulty === 'medium' ? 'orta' : 'çətin';
+      const languageText = aiLanguage === 'az' ? 'Azərbaycan' : aiLanguage === 'en' ? 'İngilis' : 'Rus';
+      const lessonTypeText = aiLessonType === 'theory' ? 'nəzəri' : aiLessonType === 'practice' ? 'praktik' : 'qarışıq';
+      
+      // Şəkillər daxil olan prompt
+      const prompt = `
+        Mənə ${aiLessonCount} ədəd ${difficultyText} çətinlik səviyyəsində, ${lessonTypeText} tipli dərs yaradın.
+        Mövzu: ${aiPrompt}
+        Sinif: ${selectedClass?.name || 'Ümumi'}
+        Dil: ${languageText}
+        
+        Hər dərs aşağıdakı struktura uyğun olmalıdır:
+        
+        1. Başlıq: Qısa və aydın
+        2. Məzmun: 500-800 söz, aydın izah, sadə dil
+        3. Nümunələr: ${aiIncludeExamples ? '3-5 real nümunə' : 'yox'}
+        4. Tapşırıqlar: ${aiIncludeExercises ? '3-5 tapşırıq' : 'yox'}
+        5. Açar sözlər: 5-10 açar söz
+        ${aiIncludeImages ? '6. Şəkillər: Hər dərsə aid 2-3 şəkil təsviri əlavə edin. Şəkillər üçün [ŞƏKİL: təsvir, URL?] formatında qeyd edin.' : ''}
+        
+        Hər dərsi aşağıdakı formatda yazın:
+        
+        DƏRS ${1}:
+        BAŞLIQ: [dərsin başlığı]
+        MƏZMUN: [dərsin məzmunu - sadə dildə, aydın izah]
+        ${aiIncludeImages ? 'ŞƏKİLLƏR: [ŞƏKİL 1: təsvir, ŞƏKİL 2: təsvir, ...]' : ''}
+        NÜMUNƏLƏR: [nümunələr - hər biri ayrı sətirdə]
+        TAPŞIRIQLAR: [tapşırıqlar - hər biri ayrı sətirdə]
+        AÇAR SÖZLƏR: [açar söz1, açar söz2, açar söz3, ...]
+        
+        DƏRS ${2}:
+        ...
+        
+        Sadəcə mətni qaytarın, əlavə izahat yazmayın. HTML kodları yazmayın, sadə mətn formatında yazın.
+      `;
+
+      // Simulate progress
+      const progressInterval = setInterval(() => {
+        setAiProgress(prev => {
+          if (prev >= 90) {
+            clearInterval(progressInterval);
+            return 90;
+          }
+          return prev + 10;
+        });
+      }, 1000);
+
+      const response = await axios.post(
+        `${GEMINI_API_URL}?key=${GEMINI_API_KEY}`,
+        {
+          contents: [
+            {
+              parts: [
+                {
+                  text: prompt
+                }
+              ]
+            }
+          ],
+          generationConfig: {
+            temperature: 0.7,
+            topK: 40,
+            topP: 0.95,
+            maxOutputTokens: 8192
+          }
+        },
+        {
+          headers: {
+            'Content-Type': 'application/json'
+          }
+        }
+      );
+
+      clearInterval(progressInterval);
+      setAiProgress(100);
+
+      const generatedText = response.data.candidates[0].content.parts[0].text;
+      
+      // Parse the generated text into lessons
+      const lessons = parseGeneratedText(generatedText);
+      
+      if (lessons.length === 0) {
+        throw new Error('Heç bir dərs yaradılmadı');
+      }
+
+      setGeneratedLessons(lessons);
+      setSelectedLessons(lessons.map((_, index) => index));
+      
+      message.success(`${lessons.length} dərs uğurla yaradıldı`);
+      
+    } catch (error) {
+      console.error('AI generation error:', error);
+      message.error('AI dərsləri yaradılarkən xəta: ' + error.message);
+    } finally {
+      setAiGenerating(false);
+    }
+  };
+
+  // Parse generated text into structured lessons
+  const parseGeneratedText = (text) => {
+    const lessons = [];
+    const lessonBlocks = text.split(/DƏRS \d+:/g).filter(block => block.trim().length > 0);
+    
+    lessonBlocks.forEach((block, index) => {
+      const titleMatch = block.match(/BAŞLIQ:\s*(.+?)(?=MƏZMUN:|ŞƏKİLLƏR:|NÜMUNƏLƏR:|TAPŞIRIQLAR:|AÇAR SÖZLƏR:|$)/i);
+      const contentMatch = block.match(/MƏZMUN:\s*(.+?)(?=ŞƏKİLLƏR:|NÜMUNƏLƏR:|TAPŞIRIQLAR:|AÇAR SÖZLƏR:|$)/is);
+      const imagesMatch = block.match(/ŞƏKİLLƏR:\s*(.+?)(?=NÜMUNƏLƏR:|TAPŞIRIQLAR:|AÇAR SÖZLƏR:|$)/is);
+      const examplesMatch = block.match(/NÜMUNƏLƏR:\s*(.+?)(?=TAPŞIRIQLAR:|AÇAR SÖZLƏR:|$)/is);
+      const exercisesMatch = block.match(/TAPŞIRIQLAR:\s*(.+?)(?=AÇAR SÖZLƏR:|$)/is);
+      const keywordsMatch = block.match(/AÇAR SÖZLƏR:\s*(.+?)(?=$)/i);
+      
+      const title = titleMatch ? titleMatch[1].trim() : `Dərs ${index + 1}`;
+      const content = contentMatch ? contentMatch[1].trim() : 'Məzmun tapılmadı';
+      const imagesText = imagesMatch ? imagesMatch[1].trim() : '';
+      const examples = examplesMatch ? examplesMatch[1].trim() : '';
+      const exercises = exercisesMatch ? exercisesMatch[1].trim() : '';
+      const keywords = keywordsMatch 
+        ? keywordsMatch[1].split(',').map(k => k.trim()) 
+        : [selectedClass?.subject || 'Ümumi'];
+      
+      // Şəkilləri parse et
+      const images = [];
+      if (imagesText && aiIncludeImages) {
+        const imageMatches = imagesText.match(/ŞƏKİL \d+:\s*([^,]+)(?:,\s*(https?:\/\/[^\s]+))?/gi);
+        if (imageMatches) {
+          imageMatches.forEach((match, idx) => {
+            const parts = match.split(/[:\s,]+/);
+            const caption = parts.slice(2).join(' ').trim();
+            images.push({
+              url: getRandomImageUrl(800, 400, index * 10 + idx),
+              alt: caption,
+              caption: caption
+            });
+          });
+        } else {
+          // Əgər AI şəkil təsviri verməyibsə, mövzuya uyğun placeholder şəkillər əlavə et
+          images.push({
+            url: getRandomImageUrl(800, 400, index * 10 + 1),
+            alt: title,
+            caption: `${title} - Şəkilli izah`
+          });
+        }
+      }
+      
+      // Format examples and exercises as HTML lists if needed
+      const formattedExamples = examples.split('\n').filter(line => line.trim()).map(line => `<li>${line}</li>`).join('');
+      const formattedExercises = exercises.split('\n').filter(line => line.trim()).map(line => `<li>${line}</li>`).join('');
+      
+      // Generate HTML content using the template with images
+      const htmlContent = getLessonHTMLTemplate(
+        title,
+        content.replace(/\n/g, '<br>'),
+        formattedExamples ? `<ul>${formattedExamples}</ul>` : '',
+        formattedExercises ? `<ol>${formattedExercises}</ol>` : '',
+        keywords,
+        images
+      );
+      
+      lessons.push({
+        title,
+        content: htmlContent,
+        summary: content.substring(0, 150) + '...',
+        duration: 45,
+        difficulty: aiDifficulty,
+        keywords,
+        examples: formattedExamples,
+        exercises: formattedExercises,
+        images: images,
+        rawContent: content
+      });
+    });
+    
+    return lessons;
+  };
+
+  // Save selected lessons to Firestore
+  const saveSelectedLessons = async () => {
+    if (selectedLessons.length === 0) {
+      message.warning('Heç bir dərs seçilməyib');
+      return;
+    }
+
+    setLoading(true);
+
+    try {
+      const batch = writeBatch(db);
+      const lessonsRef = collection(db, COLLECTIONS.LESSONS);
+      
+      const lessonsToSave = selectedLessons.map(index => generatedLessons[index]);
+      
+      lessonsToSave.forEach((lesson, index) => {
+        const lessonData = {
+          title: lesson.title,
+          content: lesson.content,
+          summary: lesson.summary,
+          duration: lesson.duration,
+          difficulty: lesson.difficulty,
+          keywords: lesson.keywords,
+          examples: lesson.examples,
+          exercises: lesson.exercises,
+          images: lesson.images || [],
+          classId: selectedClass.id,
+          createdAt: Timestamp.now(),
+          updatedAt: Timestamp.now(),
+          status: 'draft',
+          order: lessons.length + index,
+          isAIGenerated: true,
+          aiPrompt: aiPrompt,
+          hasImages: (lesson.images && lesson.images.length > 0) || false
+        };
+        
+        const newLessonRef = doc(lessonsRef);
+        batch.set(newLessonRef, lessonData);
+      });
+
+      // Update class lesson count
+      const classRef = doc(db, COLLECTIONS.CLASSES, selectedClass.id);
+      batch.update(classRef, {
+        lessonCount: lessons.length + lessonsToSave.length,
+        updatedAt: Timestamp.now()
+      });
+
+      await batch.commit();
+      
+      message.success(`${lessonsToSave.length} dərs uğurla əlavə edildi`);
+      setIsAIGeneratorVisible(false);
+      setAiPrompt('');
+      setAiLessonCount(3);
+      setCurrentStep(0);
+      setGeneratedLessons([]);
+      setSelectedLessons([]);
+      
+    } catch (error) {
+      console.error('Error saving lessons:', error);
+      message.error('Dərslər yadda saxlanılarkən xəta: ' + error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleCreateClass = async (values) => {
     try {
       setLoading(true);
       
-      // Clean the values to remove undefined fields
       const cleanValues = {
         name: values.name || '',
         description: values.description || '',
@@ -308,14 +601,12 @@ export const CreateClass = () => {
     try {
       setLoading(true);
       
-      // Validate content
       if (!lessonContent || lessonContent === '<p><br></p>' || lessonContent === '<p></p>') {
         message.error('Please add lesson content');
         setLoading(false);
         return;
       }
 
-      // Clean the values to remove undefined
       const cleanValues = {
         title: values.title || '',
         status: values.status || 'draft'
@@ -328,7 +619,11 @@ export const CreateClass = () => {
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
         status: cleanValues.status,
-        order: lessons.length // Add order field for drag and drop
+        order: lessons.length,
+        summary: values.summary || '',
+        duration: values.duration || 45,
+        difficulty: values.difficulty || 'medium',
+        keywords: values.keywords || []
       };
 
       if (editingLesson) {
@@ -340,7 +635,6 @@ export const CreateClass = () => {
       } else {
         await addDoc(collection(db, COLLECTIONS.LESSONS), lessonData);
         
-        // Update class lesson count
         const classRef = doc(db, COLLECTIONS.CLASSES, selectedClass.id);
         await updateDoc(classRef, {
           lessonCount: lessons.length + 1,
@@ -367,7 +661,6 @@ export const CreateClass = () => {
       setLoading(true);
       await deleteDoc(doc(db, COLLECTIONS.LESSONS, lessonId));
       
-      // Update class lesson count
       const classRef = doc(db, COLLECTIONS.CLASSES, selectedClass.id);
       await updateDoc(classRef, {
         lessonCount: Math.max(0, lessons.length - 1),
@@ -382,7 +675,6 @@ export const CreateClass = () => {
     }
   };
 
-  // Handle drag and drop reordering
   const handleDragEnd = async (result) => {
     if (!result.destination) return;
 
@@ -390,14 +682,12 @@ export const CreateClass = () => {
     const [reorderedItem] = items.splice(result.source.index, 1);
     items.splice(result.destination.index, 0, reorderedItem);
 
-    // Update local state immediately for smooth UI
     const updatedItems = items.map((item, index) => ({
       ...item,
       sno: index + 1
     }));
     setLessons(updatedItems);
 
-    // Update order in Firestore
     try {
       const batch = writeBatch(db);
       
@@ -414,7 +704,6 @@ export const CreateClass = () => {
     } catch (error) {
       console.error('Error updating lesson order:', error);
       message.error('Error updating lesson order: ' + error.message);
-      // Revert to original order if error occurs
       const originalItems = lessons.map((item, index) => ({
         ...item,
         sno: index + 1
@@ -428,7 +717,11 @@ export const CreateClass = () => {
       setEditingLesson(lesson);
       lessonForm.setFieldsValue({
         title: lesson.title,
-        status: lesson.status
+        status: lesson.status,
+        summary: lesson.summary,
+        duration: lesson.duration,
+        difficulty: lesson.difficulty,
+        keywords: lesson.keywords
       });
       setLessonContent(lesson.content || '');
     } else {
@@ -439,7 +732,6 @@ export const CreateClass = () => {
     setIsLessonDrawerVisible(true);
   };
 
-  // Function to preview content with proper styling
   const showContentPreview = (record) => {
     Modal.info({
       title: record.title,
@@ -452,11 +744,7 @@ export const CreateClass = () => {
           background: '#fff',
           borderRadius: '8px'
         }}>
-          <style>{previewStyles}</style>
-          <div 
-            className="lesson-preview"
-            dangerouslySetInnerHTML={{ __html: record.content }} 
-          />
+          <div dangerouslySetInnerHTML={{ __html: record.content }} />
         </div>
       ),
       okText: 'Bağla',
@@ -466,7 +754,6 @@ export const CreateClass = () => {
     });
   };
 
-  // Function to migrate old lessons (add order field if missing)
   const migrateLessons = async () => {
     if (!selectedClass || lessons.length === 0) return;
     
@@ -505,12 +792,10 @@ export const CreateClass = () => {
     });
   };
 
-  // Check for lessons without order when lessons change
   useEffect(() => {
     if (lessons.length > 0) {
       const lessonsWithoutOrder = lessons.filter(l => l.order === undefined);
       if (lessonsWithoutOrder.length > 0) {
-        // Auto-migrate after a short delay
         const timer = setTimeout(() => {
           migrateLessons();
         }, 2000);
@@ -641,6 +926,9 @@ export const CreateClass = () => {
                         {item.grade && <Tag color="cyan">{item.grade}</Tag>}
                         {item.subject && <Tag color="purple">{item.subject}</Tag>}
                         <Tag color="blue">{item.lessonCount || 0} dərs</Tag>
+                        {item.isAIGenerated && (
+                          <Tag color="purple" icon={<RobotOutlined />}>AI</Tag>
+                        )}
                       </Space>
                     }
                   />
@@ -679,6 +967,14 @@ export const CreateClass = () => {
                   <Tag icon={<DragOutlined />} color="blue">
                     Dərsləri sürükləyib yerlərini dəyişin
                   </Tag>
+                  <Button
+                    type="primary"
+                    icon={<RobotOutlined />}
+                    style={{ background: '#722ed1', borderColor: '#722ed1' }}
+                    onClick={() => setIsAIGeneratorVisible(true)}
+                  >
+                    AI ilə Dərs Yarat
+                  </Button>
                   <Button
                     type="primary"
                     icon={<PlusOutlined />}
@@ -744,7 +1040,7 @@ export const CreateClass = () => {
                                         {index + 1}
                                       </Tag>
                                     </Col>
-                                    <Col span={6}>
+                                    <Col span={5}>
                                       <Space>
                                         <ReadOutlined style={{ color: '#1890ff' }} />
                                         <Text strong>{lesson.title || ''}</Text>
@@ -753,21 +1049,41 @@ export const CreateClass = () => {
                                             <WarningOutlined style={{ color: '#faad14' }} />
                                           </Tooltip>
                                         )}
+                                        {lesson.isAIGenerated && (
+                                          <Tooltip title="AI tərəfindən yaradılıb">
+                                            <RobotOutlined style={{ color: '#722ed1' }} />
+                                          </Tooltip>
+                                        )}
+                                        {lesson.hasImages && (
+                                          <Tooltip title="Şəkillər var">
+                                            <PictureOutlined style={{ color: '#52c41a' }} />
+                                          </Tooltip>
+                                        )}
                                       </Space>
                                     </Col>
-                                    <Col span={3}>
+                                    <Col span={2}>
+                                      <Tag color={lesson.difficulty === 'easy' ? 'green' : lesson.difficulty === 'medium' ? 'orange' : 'red'}>
+                                        {lesson.difficulty === 'easy' ? 'Asan' : lesson.difficulty === 'medium' ? 'Orta' : 'Çətin'}
+                                      </Tag>
+                                    </Col>
+                                    <Col span={2}>
                                       <Badge 
                                         color={lesson.status === 'published' ? 'green' : lesson.status === 'draft' ? 'orange' : 'default'}
-                                        text={lesson.status === 'published' ? 'Dərc edilib' : lesson.status === 'draft' ? 'Qaralama' : 'Arxiv'} 
+                                        text={lesson.status === 'published' ? 'Dərc' : lesson.status === 'draft' ? 'Qaralama' : 'Arxiv'} 
                                       />
                                     </Col>
-                                    <Col span={4}>
+                                    <Col span={3}>
+                                      <Text type="secondary">
+                                        {lesson.duration || 45} dəq
+                                      </Text>
+                                    </Col>
+                                    <Col span={3}>
                                       <Text type="secondary">
                                         {lesson.createdAt ? new Date(lesson.createdAt.toDate()).toLocaleDateString('az-AZ') : '-'}
                                       </Text>
                                     </Col>
-                                    <Col span={9} style={{ textAlign: 'right' }}>
-                                      <Space size="middle">
+                                    <Col span={7} style={{ textAlign: 'right' }}>
+                                      <Space size="small">
                                         <Tooltip title="Məzmunu göstər">
                                           <Button 
                                             type="text"
@@ -787,12 +1103,9 @@ export const CreateClass = () => {
                                                 width: 900,
                                                 content: (
                                                   <div style={{ maxHeight: '600px', overflow: 'auto' }}>
-                                                    <HtmlCodeShow 
-                                                      data={{
-                                                        previewHtml: lesson.content || '',
-                                                        onChange: () => {}
-                                                      }} 
-                                                    />
+                                                    <pre style={{ background: '#f5f5f5', padding: 15, borderRadius: 5 }}>
+                                                      {lesson.content}
+                                                    </pre>
                                                   </div>
                                                 ),
                                                 okText: 'Bağla'
@@ -837,6 +1150,14 @@ export const CreateClass = () => {
                   <p style={{ marginTop: '16px', color: '#999' }}>
                     Hələ dərs yoxdur. "Yeni Dərs" düyməsini klikləyin.
                   </p>
+                  <Button
+                    type="primary"
+                    icon={<RobotOutlined />}
+                    style={{ background: '#722ed1', borderColor: '#722ed1', marginTop: '16px' }}
+                    onClick={() => setIsAIGeneratorVisible(true)}
+                  >
+                    AI ilə Dərs Yarat
+                  </Button>
                 </div>
               )
             ) : (
@@ -971,21 +1292,66 @@ export const CreateClass = () => {
           onFinish={handleCreateLesson}
           initialValues={{
             title: '',
-            status: 'draft'
+            status: 'draft',
+            duration: 45,
+            difficulty: 'medium',
+            keywords: []
           }}
         >
+          <Row gutter={16}>
+            <Col span={12}>
+              <Form.Item
+                name="title"
+                label="Dərsin Başlığı"
+                rules={[{ required: true, message: 'Dərsin başlığını daxil edin' }]}
+              >
+                <Input placeholder="Dərsin başlığı" size="large" />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item
+                name="duration"
+                label="Müddət (dəqiqə)"
+              >
+                <InputNumber min={5} max={180} style={{ width: '100%' }} />
+              </Form.Item>
+            </Col>
+            <Col span={6}>
+              <Form.Item
+                name="difficulty"
+                label="Çətinlik"
+              >
+                <Select>
+                  <Option value="easy">Asan</Option>
+                  <Option value="medium">Orta</Option>
+                  <Option value="hard">Çətin</Option>
+                </Select>
+              </Form.Item>
+            </Col>
+          </Row>
+
           <Form.Item
-            name="title"
-            label="Dərsin Başlığı"
-            rules={[{ required: true, message: 'Dərsin başlığını daxil edin' }]}
+            name="summary"
+            label="Qısa Xülasə"
           >
-            <Input placeholder="Dərsin başlığı" size="large" />
+            <TextArea rows={2} placeholder="Dərsin qısa xülasəsi" />
+          </Form.Item>
+
+          <Form.Item
+            name="keywords"
+            label="Açar Sözlər"
+          >
+            <Select
+              mode="tags"
+              style={{ width: '100%' }}
+              placeholder="Açar sözlər daxil edin"
+              allowClear
+            />
           </Form.Item>
 
           <Form.Item
             name="status"
             label="Status"
-            initialValue="draft"
           >
             <Select>
               <Option value="draft">Qaralama</Option>
@@ -1014,17 +1380,13 @@ export const CreateClass = () => {
             bordered
             style={{ marginBottom: 24 }}
             bodyStyle={{
-              padding: 0,
+              padding: "20px",
               background: "#fff",
               maxHeight: "400px",
               overflow: "auto"
             }}
           >
-            <style>{previewStyles}</style>
-            <div
-              className="lesson-preview"
-              dangerouslySetInnerHTML={{ __html: lessonContent }}
-            />
+            <div dangerouslySetInnerHTML={{ __html: lessonContent }} />
           </Card>
 
           <Divider>HTML Kodu</Divider>
@@ -1034,15 +1396,294 @@ export const CreateClass = () => {
             bordered
             style={{ marginBottom: 24 }}
           >
-            <HtmlCodeShow 
-              data={{
-                previewHtml: lessonContent,
-                onChange: setLessonContent
-              }} 
-            />
+            <pre style={{ background: '#f5f5f5', padding: 15, borderRadius: 5, maxHeight: 300, overflow: 'auto' }}>
+              {lessonContent}
+            </pre>
           </Card>
         </Form>
       </Drawer>
+
+      {/* AI Lesson Generator Modal */}
+      <Modal
+        title={
+          <Space>
+            <RobotOutlined style={{ color: '#722ed1' }} />
+            <span>AI ilə Dərs Yaradılması</span>
+          </Space>
+        }
+        open={isAIGeneratorVisible}
+        onCancel={() => {
+          setIsAIGeneratorVisible(false);
+          setAiPrompt('');
+          setAiLessonCount(3);
+          setCurrentStep(0);
+          setGeneratedLessons([]);
+          setSelectedLessons([]);
+        }}
+        footer={null}
+        width={900}
+      >
+        <Spin spinning={aiGenerating}>
+          {!selectedClass && (
+            <Alert
+              message="Xəbərdarlıq"
+              description="Dərs yaratmaq üçün əvvəlcə bir sinif seçməlisiniz."
+              type="warning"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+          )}
+
+          <Steps current={currentStep} style={{ marginBottom: 24 }}>
+            <Step title="Mövzu" icon={<QuestionCircleOutlined />} />
+            <Step title="Parametrlər" icon={<SettingOutlined />} />
+            <Step title="Yaradılma" icon={<ThunderboltOutlined />} />
+            <Step title="Seçim" icon={<CheckCircleOutlined />} />
+          </Steps>
+
+          {currentStep === 0 && (
+            <Form layout="vertical">
+              <Form.Item label="Dərs Mövzusu / Prompt" required>
+                <TextArea
+                  rows={4}
+                  placeholder="Məsələn: Riyaziyyat - Törəmə mövzusunda 3 dərs yarat"
+                  value={aiPrompt}
+                  onChange={(e) => setAiPrompt(e.target.value)}
+                />
+              </Form.Item>
+              <Alert
+                message="İpucu"
+                description="Mövzunu dəqiq yazın. Məsələn: 'Fizika - Nyuton qanunları', 'Tarix - Qarabağ xanlığı', 'Ədəbiyyat - Səməd Vurğun'"
+                type="info"
+                showIcon
+              />
+            </Form>
+          )}
+
+          {currentStep === 1 && (
+            <Form layout="vertical">
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item label="Dərs Sayı">
+                    <InputNumber
+                      min={1}
+                      max={20}
+                      value={aiLessonCount}
+                      onChange={setAiLessonCount}
+                      style={{ width: '100%' }}
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="Çətinlik">
+                    <Select value={aiDifficulty} onChange={setAiDifficulty}>
+                      <Option value="easy">Asan</Option>
+                      <Option value="medium">Orta</Option>
+                      <Option value="hard">Çətin</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item label="Dərs Tipi">
+                    <Select value={aiLessonType} onChange={setAiLessonType}>
+                      <Option value="theory">Nəzəri</Option>
+                      <Option value="practice">Praktik</Option>
+                      <Option value="mixed">Qarışıq</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Form.Item label="Dil">
+                    <Select value={aiLanguage} onChange={setAiLanguage}>
+                      <Option value="az">Azərbaycan</Option>
+                      <Option value="en">İngilis</Option>
+                      <Option value="ru">Rus</Option>
+                    </Select>
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Form.Item label="Əlavə Seçimlər">
+                <Space direction="vertical" style={{ width: '100%' }}>
+                  <Checkbox 
+                    checked={aiIncludeExamples} 
+                    onChange={(e) => setAiIncludeExamples(e.target.checked)}
+                  >
+                    Nümunələr əlavə et
+                  </Checkbox>
+                  <Checkbox 
+                    checked={aiIncludeExercises} 
+                    onChange={(e) => setAiIncludeExercises(e.target.checked)}
+                  >
+                    Tapşırıqlar əlavə et
+                  </Checkbox>
+                  <Checkbox 
+                    checked={aiIncludeImages} 
+                    onChange={(e) => setAiIncludeImages(e.target.checked)}
+                  >
+                    Şəkillər əlavə et (pulsuz şəkillər)
+                  </Checkbox>
+                </Space>
+              </Form.Item>
+            </Form>
+          )}
+
+          {currentStep === 2 && (
+            <div style={{ textAlign: 'center', padding: '20px' }}>
+              {aiGenerating ? (
+                <>
+                  <Progress type="circle" percent={aiProgress} status="active" />
+                  <Title level={4} style={{ marginTop: 20 }}>Dərslər yaradılır...</Title>
+                  <Paragraph>
+                    <Text type="secondary">Zəhmət olmasa gözləyin. Bu bir neçə saniyə çəkə bilər.</Text>
+                  </Paragraph>
+                </>
+              ) : (
+                <>
+                  <ThunderboltOutlined style={{ fontSize: 48, color: '#722ed1', marginBottom: 16 }} />
+                  <Title level={4}>Dərslər yaradılmağa hazırdır!</Title>
+                  <Paragraph>
+                    <Text strong>Mövzu:</Text> {aiPrompt}<br />
+                    <Text strong>Dərs sayı:</Text> {aiLessonCount}<br />
+                    <Text strong>Çətinlik:</Text> {aiDifficulty === 'easy' ? 'Asan' : aiDifficulty === 'medium' ? 'Orta' : 'Çətin'}<br />
+                    <Text strong>Sinif:</Text> {selectedClass?.name}
+                  </Paragraph>
+                  <Alert
+                    message="Qeyd"
+                    description="AI tərəfindən yaradılan dərsləri yoxlamaq və redaktə etmək tövsiyə olunur."
+                    type="info"
+                    showIcon
+                  />
+                </>
+              )}
+            </div>
+          )}
+
+          {currentStep === 3 && generatedLessons.length > 0 && (
+            <div>
+              <Alert
+                message={`${generatedLessons.length} dərs yaradıldı`}
+                description="İstədiyiniz dərsləri seçin və 'Seçilmişləri Yadda Saxla' düyməsini klikləyin."
+                type="success"
+                showIcon
+                style={{ marginBottom: 16 }}
+              />
+              
+              <List
+                itemLayout="horizontal"
+                dataSource={generatedLessons}
+                style={{ maxHeight: 400, overflow: 'auto' }}
+                renderItem={(lesson, index) => (
+                  <List.Item
+                    actions={[
+                      <Checkbox 
+                        checked={selectedLessons.includes(index)}
+                        onChange={(e) => {
+                          if (e.target.checked) {
+                            setSelectedLessons([...selectedLessons, index]);
+                          } else {
+                            setSelectedLessons(selectedLessons.filter(i => i !== index));
+                          }
+                        }}
+                      >
+                        Seç
+                      </Checkbox>,
+                      <Button 
+                        type="link" 
+                        size="small"
+                        onClick={() => {
+                          Modal.info({
+                            title: lesson.title,
+                            width: 900,
+                            content: (
+                              <div style={{ maxHeight: 500, overflow: 'auto', padding: 20 }}>
+                                <div dangerouslySetInnerHTML={{ __html: lesson.content }} />
+                              </div>
+                            ),
+                            okText: 'Bağla'
+                          });
+                        }}
+                      >
+                        Önizlə
+                      </Button>
+                    ]}
+                  >
+                    <List.Item.Meta
+                      avatar={<Avatar style={{ background: '#722ed1' }}>{index + 1}</Avatar>}
+                      title={
+                        <Space>
+                          {lesson.title}
+                          {lesson.images && lesson.images.length > 0 && (
+                            <PictureOutlined style={{ color: '#52c41a' }} />
+                          )}
+                        </Space>
+                      }
+                      description={
+                        <Space>
+                          <Tag color="blue">{lesson.duration} dəq</Tag>
+                          <Tag color={lesson.difficulty === 'easy' ? 'green' : lesson.difficulty === 'medium' ? 'orange' : 'red'}>
+                            {lesson.difficulty === 'easy' ? 'Asan' : lesson.difficulty === 'medium' ? 'Orta' : 'Çətin'}
+                          </Tag>
+                          <Tag color="purple">{lesson.keywords.slice(0, 3).join(', ')}</Tag>
+                          {lesson.images && lesson.images.length > 0 && (
+                            <Tag color="green">{lesson.images.length} şəkil</Tag>
+                          )}
+                        </Space>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+            </div>
+          )}
+
+          <Divider />
+
+          <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+            <Button
+              disabled={currentStep === 0}
+              onClick={() => setCurrentStep(currentStep - 1)}
+            >
+              Geri
+            </Button>
+            <Space>
+              {currentStep === 3 ? (
+                <Button
+                  type="primary"
+                  icon={<SaveOutlined />}
+                  onClick={saveSelectedLessons}
+                  loading={loading}
+                  disabled={selectedLessons.length === 0}
+                >
+                  Seçilmişləri Yadda Saxla ({selectedLessons.length})
+                </Button>
+              ) : (
+                <Button
+                  type="primary"
+                  onClick={() => {
+                    if (currentStep === 0 && !aiPrompt) {
+                      message.warning('Zəhmət olmasa mövzu daxil edin');
+                      return;
+                    }
+                    if (currentStep === 2) {
+                      generateLessonsWithAI();
+                      setCurrentStep(3);
+                    } else {
+                      setCurrentStep(currentStep + 1);
+                    }
+                  }}
+                  disabled={currentStep === 2 && aiGenerating}
+                >
+                  {currentStep === 2 ? 'Yarat' : 'İrəli'}
+                </Button>
+              )}
+            </Space>
+          </div>
+        </Spin>
+      </Modal>
     </Layout>
   );
 };
