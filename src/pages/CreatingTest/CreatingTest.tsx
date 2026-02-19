@@ -116,7 +116,7 @@ const LanguageNames = {
 };
 
 // Gemini API configuration
-const GEMINI_API_KEY = 'AIzaSyAKKgBCNrXIkRjyNEup9T5Lxpuakv9jWdM';
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API;
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 // Custom styles for preview (same as CreateClass)

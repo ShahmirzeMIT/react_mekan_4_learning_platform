@@ -29,7 +29,11 @@ import {
   Spin,
   Progress,
   Tabs,
-  Image
+  Image,
+  Upload,
+  Statistic,
+  Empty,
+  Progress as AntProgress
 } from 'antd';
 import {
   PlusOutlined,
@@ -56,7 +60,20 @@ import {
   FileTextOutlined,
   CopyOutlined,
   DownloadOutlined,
-  PictureOutlined
+  PictureOutlined,
+  UploadOutlined,
+  FilePdfOutlined,
+  LeftOutlined,
+  RightOutlined,
+  FolderOutlined,
+  FileAddOutlined,
+  ExportOutlined,
+  ImportOutlined,
+  FilterOutlined,
+  ReloadOutlined,
+  InboxOutlined,
+  PaperClipOutlined,
+  LinkOutlined
 } from '@ant-design/icons';
 import {
   collection,
@@ -71,9 +88,9 @@ import {
   onSnapshot,
   writeBatch
 } from 'firebase/firestore';
-import { db } from '@/config/firebase';
+import { db, storage } from '@/config/firebase';
+import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import HtmlEditorComp from './HtmlEditorComp';
-import HtmlCodeShow from './HtmlCodeShow';
 import { DragDropContext, Droppable, Draggable } from 'react-beautiful-dnd';
 import axios from 'axios';
 
@@ -82,15 +99,17 @@ const { TextArea } = Input;
 const { Option } = Select;
 const { Step } = Steps;
 const { TabPane } = Tabs;
+const { Dragger } = Upload;
 
 // Collection names with platform_ prefix
 const COLLECTIONS = {
   CLASSES: 'platform_classes',
-  LESSONS: 'platform_lessons'
+  LESSONS: 'platform_lessons',
+  PDF_DOCUMENTS: 'platform_pdfs' // This matches your screenshot
 };
 
 // Gemini API configuration
-const GEMINI_API_KEY = 'AIzaSyAKKgBCNrXIkRjyNEup9T5Lxpuakv9jWdM';
+const GEMINI_API_KEY = import.meta.env.VITE_GEMINI_API;
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 // Şəkil URL-ləri üçün placeholder (picsum photos - pulsuz şəkillər)
@@ -162,14 +181,440 @@ const getLessonHTMLTemplate = (title, content, examples, exercises, keywords, im
   `;
 };
 
+// Multi PDF Import Component
+const MultiPDFImportModal = ({ visible, onCancel, onSuccess, classId }) => {
+  const [pdfFiles, setPdfFiles] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState({});
+  const [uploadedPdfs, setUploadedPdfs] = useState([]);
+  const [pdfError, setPdfError] = useState('');
+
+  const handleFileUpload = async (file) => {
+    // Check if file already exists in the list
+    if (pdfFiles.some(f => f.name === file.name && f.size === file.size)) {
+      message.warning(`${file.name} artıq əlavə edilib`);
+      return false;
+    }
+
+    setPdfFiles(prev => [...prev, file]);
+    return false;
+  };
+
+  const uploadAllPDFs = async () => {
+    if (pdfFiles.length === 0) {
+      message.warning('Zəhmət olmasa PDF fayllarını seçin');
+      return;
+    }
+
+    if (!classId) {
+      message.warning('Sinif ID tapılmadı');
+      return;
+    }
+
+    setUploading(true);
+    setUploadedPdfs([]);
+    setPdfError('');
+
+    const uploaded = [];
+    const progress = {};
+
+    try {
+      for (let i = 0; i < pdfFiles.length; i++) {
+        const file = pdfFiles[i];
+        
+        try {
+          // Update progress for this file
+          progress[file.name] = 0;
+          setUploadProgress({ ...progress });
+
+          // Upload to Firebase Storage
+          const fileName = `pdfs/${classId}/${Date.now()}_${file.name}`;
+          const storageRef = ref(storage, fileName);
+          
+          // Simulate progress
+          const progressInterval = setInterval(() => {
+            progress[file.name] = Math.min(90, (progress[file.name] || 0) + 10);
+            setUploadProgress({ ...progress });
+          }, 200);
+
+          await uploadBytes(storageRef, file);
+          
+          clearInterval(progressInterval);
+          progress[file.name] = 100;
+          setUploadProgress({ ...progress });
+
+          const url = await getDownloadURL(storageRef);
+
+          // Save metadata to Firestore
+          const pdfDocData = {
+            classId: classId,
+            fileName: file.name,
+            fileUrl: url,
+            fileSize: file.size,
+            fileType: file.type,
+            createdAt: Timestamp.now(),
+            status: 'active'
+          };
+
+          const docRef = await addDoc(collection(db, COLLECTIONS.PDF_DOCUMENTS), pdfDocData);
+          
+          uploaded.push({
+            id: docRef.id,
+            ...pdfDocData
+          });
+
+          setUploadedPdfs([...uploaded]);
+
+        } catch (fileError) {
+          console.error(`Error uploading ${file.name}:`, fileError);
+          message.error(`${file.name} yüklənərkən xəta: ${fileError.message}`);
+        }
+      }
+
+      if (uploaded.length > 0) {
+        message.success(`${uploaded.length} PDF uğurla yükləndi`);
+        onSuccess(uploaded);
+        
+        // Reset state
+        setPdfFiles([]);
+        setUploadProgress({});
+        setUploadedPdfs([]);
+        onCancel();
+      } else {
+        message.error('Heç bir PDF yüklənə bilmədi');
+      }
+
+    } catch (error) {
+      console.error('Error in batch upload:', error);
+      setPdfError(error.message);
+      message.error('PDF-lər yüklənərkən xəta: ' + error.message);
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  const removeFile = (fileToRemove) => {
+    setPdfFiles(prev => prev.filter(f => f.name !== fileToRemove.name || f.size !== fileToRemove.size));
+  };
+
+  const getTotalSize = () => {
+    return pdfFiles.reduce((total, file) => total + file.size, 0);
+  };
+
+  return (
+    <Modal
+      title={
+        <Space>
+          <FilePdfOutlined style={{ color: '#ff4d4f' }} />
+          <span>Çoxlu PDF Yüklə</span>
+        </Space>
+      }
+      open={visible}
+      onCancel={onCancel}
+      width={700}
+      footer={[
+        <Button key="cancel" onClick={onCancel} disabled={uploading}>
+          Ləğv Et
+        </Button>,
+        <Button
+          key="upload"
+          type="primary"
+          icon={<UploadOutlined />}
+          onClick={uploadAllPDFs}
+          loading={uploading}
+          disabled={pdfFiles.length === 0}
+          style={{ background: '#ff4d4f', borderColor: '#ff4d4f' }}
+        >
+          {pdfFiles.length > 0 ? `${pdfFiles.length} PDF-i Yüklə` : 'PDF Yüklə'}
+        </Button>
+      ]}
+    >
+      <Spin spinning={uploading}>
+        {pdfError && (
+          <Alert
+            message="Xəta"
+            description={pdfError}
+            type="error"
+            showIcon
+            style={{ marginBottom: 16 }}
+            closable
+            onClose={() => setPdfError('')}
+          />
+        )}
+
+        <Card bordered={false}>
+          <Dragger
+            name="files"
+            multiple={true}
+            accept=".pdf"
+            beforeUpload={handleFileUpload}
+            showUploadList={false}
+            disabled={uploading}
+          >
+            <p className="ant-upload-drag-icon">
+              <InboxOutlined />
+            </p>
+            <p className="ant-upload-text">PDF fayllarını seçin və ya sürüşdürün</p>
+            <p className="ant-upload-hint">
+              Birdən çox PDF seçə bilərsiniz. Maksimum fayl ölçüsü: 50MB
+            </p>
+          </Dragger>
+
+          {pdfFiles.length > 0 && (
+            <div style={{ marginTop: 24 }}>
+              <Divider orientation="left">
+                <Space>
+                  <PaperClipOutlined />
+                  Seçilmiş fayllar ({pdfFiles.length})
+                </Space>
+              </Divider>
+              
+              <List
+                size="small"
+                dataSource={pdfFiles}
+                renderItem={(file, index) => (
+                  <List.Item
+                    actions={[
+                      !uploading && (
+                        <Button
+                          type="text"
+                          danger
+                          size="small"
+                          icon={<DeleteOutlined />}
+                          onClick={() => removeFile(file)}
+                        />
+                      )
+                    ]}
+                  >
+                    <List.Item.Meta
+                      avatar={<FilePdfOutlined style={{ color: '#ff4d4f' }} />}
+                      title={file.name}
+                      description={
+                        <Space direction="vertical" size={0} style={{ width: '100%' }}>
+                          <Text type="secondary" style={{ fontSize: 12 }}>
+                            Ölçü: {(file.size / 1024 / 1024).toFixed(2)} MB
+                          </Text>
+                          {uploadProgress[file.name] !== undefined && (
+                            <AntProgress 
+                              percent={uploadProgress[file.name]} 
+                              size="small" 
+                              showInfo={false}
+                              strokeColor={{
+                                '0%': '#108ee9',
+                                '100%': '#87d068',
+                              }}
+                            />
+                          )}
+                        </Space>
+                      }
+                    />
+                  </List.Item>
+                )}
+              />
+
+              <Divider />
+              
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Statistic
+                    title="Fayl sayı"
+                    value={pdfFiles.length}
+                    suffix="fayl"
+                  />
+                </Col>
+                <Col span={12}>
+                  <Statistic
+                    title="Ümumi ölçü"
+                    value={(getTotalSize() / 1024 / 1024).toFixed(2)}
+                    suffix="MB"
+                  />
+                </Col>
+              </Row>
+            </div>
+          )}
+
+          {uploadedPdfs.length > 0 && (
+            <Alert
+              message="Yükləndi"
+              description={`${uploadedPdfs.length} PDF uğurla yükləndi`}
+              type="success"
+              showIcon
+              style={{ marginTop: 16 }}
+            />
+          )}
+        </Card>
+      </Spin>
+    </Modal>
+  );
+};
+
+// PDF List Component with enhanced features
+const PDFListDrawer = ({ visible, onClose, pdfs, onViewPDF, onDeletePDF, onRefresh }) => {
+  const [selectedPDFs, setSelectedPDFs] = useState([]);
+  const [loading, setLoading] = useState(false);
+
+  const handleDeleteSelected = async () => {
+    if (selectedPDFs.length === 0) return;
+    
+    Modal.confirm({
+      title: 'PDF-ləri sil',
+      content: `${selectedPDFs.length} PDF sənədini silmək istədiyinizə əminsiniz?`,
+      okText: 'Bəli',
+      cancelText: 'Xeyr',
+      onOk: async () => {
+        setLoading(true);
+        try {
+          for (const pdfId of selectedPDFs) {
+            await onDeletePDF(pdfId);
+          }
+          message.success(`${selectedPDFs.length} PDF silindi`);
+          setSelectedPDFs([]);
+          onRefresh();
+        } catch (error) {
+          message.error('Xəta baş verdi: ' + error.message);
+        } finally {
+          setLoading(false);
+        }
+      }
+    });
+  };
+
+  return (
+    <Drawer
+      title={
+        <Space>
+          <FilePdfOutlined style={{ color: '#ff4d4f' }} />
+          <span>PDF Sənədlər ({pdfs.length})</span>
+        </Space>
+      }
+      placement="right"
+      width={600}
+      onClose={onClose}
+      open={visible}
+      extra={
+        <Space>
+          {selectedPDFs.length > 0 && (
+            <Button 
+              danger 
+              icon={<DeleteOutlined />} 
+              onClick={handleDeleteSelected}
+              loading={loading}
+            >
+              {selectedPDFs.length} sil
+            </Button>
+          )}
+          <Button icon={<ReloadOutlined />} onClick={onRefresh}>
+            Yenilə
+          </Button>
+        </Space>
+      }
+    >
+      {pdfs.length === 0 ? (
+        <Empty
+          image={Empty.PRESENTED_IMAGE_SIMPLE}
+          description="Bu sinifə aid PDF sənəd yoxdur"
+        />
+      ) : (
+        <List
+          itemLayout="horizontal"
+          dataSource={pdfs}
+          loading={loading}
+          renderItem={(pdf) => (
+            <List.Item
+              actions={[
+                <Button
+                  type="link"
+                  icon={<EyeOutlined />}
+                  onClick={() => onViewPDF(pdf)}
+                >
+                  Bax
+                </Button>,
+                <Button
+                  type="link"
+                  icon={<DownloadOutlined />}
+                  href={pdf.fileUrl}
+                  target="_blank"
+                >
+                  Yüklə
+                </Button>,
+                <Popconfirm
+                  title="Bu PDF-i silmək istədiyinizə əminsiniz?"
+                  onConfirm={() => onDeletePDF(pdf.id)}
+                  okText="Bəli"
+                  cancelText="Xeyr"
+                >
+                  <Button
+                    type="link"
+                    danger
+                    icon={<DeleteOutlined />}
+                  >
+                    Sil
+                  </Button>
+                </Popconfirm>
+              ]}
+            >
+              <List.Item.Meta
+                avatar={
+                  <Checkbox 
+                    checked={selectedPDFs.includes(pdf.id)}
+                    onChange={(e) => {
+                      if (e.target.checked) {
+                        setSelectedPDFs([...selectedPDFs, pdf.id]);
+                      } else {
+                        setSelectedPDFs(selectedPDFs.filter(id => id !== pdf.id));
+                      }
+                    }}
+                  />
+                }
+                title={
+                  <Space>
+                    <FilePdfOutlined style={{ color: '#ff4d4f' }} />
+                    <Text strong>{pdf.fileName}</Text>
+                    {pdf.fileSize > 10 * 1024 * 1024 && (
+                      <Tag color="orange">Böyük</Tag>
+                    )}
+                  </Space>
+                }
+                description={
+                  <Space direction="vertical" size={0}>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      Ölçü: {(pdf.fileSize / 1024 / 1024).toFixed(2)} MB
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      Yüklənmə tarixi: {pdf.createdAt ? new Date(pdf.createdAt.toDate()).toLocaleDateString('az-AZ', {
+                        year: 'numeric',
+                        month: 'long',
+                        day: 'numeric',
+                        hour: '2-digit',
+                        minute: '2-digit'
+                      }) : '-'}
+                    </Text>
+                    <Text type="secondary" style={{ fontSize: 12 }}>
+                      Sinif ID: {pdf.classId}
+                    </Text>
+                  </Space>
+                }
+              />
+            </List.Item>
+          )}
+        />
+      )}
+    </Drawer>
+  );
+};
+
 // Main Component
 export const CreateClass = () => {
   const [classes, setClasses] = useState([]);
+  const [selectedClassId, setSelectedClassId] = useState(null);
   const [selectedClass, setSelectedClass] = useState(null);
   const [lessons, setLessons] = useState([]);
+  const [pdfDocuments, setPdfDocuments] = useState([]);
   const [isClassModalVisible, setIsClassModalVisible] = useState(false);
   const [isLessonDrawerVisible, setIsLessonDrawerVisible] = useState(false);
   const [isAIGeneratorVisible, setIsAIGeneratorVisible] = useState(false);
+  const [isPDFImportVisible, setIsPDFImportVisible] = useState(false);
+  const [isPDFListVisible, setIsPDFListVisible] = useState(false);
   const [editingClass, setEditingClass] = useState(null);
   const [editingLesson, setEditingLesson] = useState(null);
   const [loading, setLoading] = useState(false);
@@ -179,6 +624,7 @@ export const CreateClass = () => {
   const [form] = Form.useForm();
   const [lessonForm] = Form.useForm();
   const [lessonContent, setLessonContent] = useState('');
+  const [tableLoading, setTableLoading] = useState(false);
 
   // AI Generator state
   const [aiPrompt, setAiPrompt] = useState('');
@@ -193,7 +639,7 @@ export const CreateClass = () => {
   const [generatedLessons, setGeneratedLessons] = useState([]);
   const [selectedLessons, setSelectedLessons] = useState([]);
 
-  // Fetch classes on component mount with real-time updates
+  // Fetch classes on component mount
   useEffect(() => {
     const classesRef = collection(db, COLLECTIONS.CLASSES);
     const q = query(classesRef, orderBy('createdAt', 'desc'));
@@ -212,19 +658,80 @@ export const CreateClass = () => {
     return () => unsubscribe();
   }, []);
 
-  // Fetch lessons with real-time updates when class is selected
+  // Update selected class when ID changes
   useEffect(() => {
-    if (!selectedClass) {
+    if (selectedClassId && classes.length > 0) {
+      const foundClass = classes.find(c => c.id === selectedClassId);
+      setSelectedClass(foundClass || null);
+    } else {
+      setSelectedClass(null);
+    }
+  }, [selectedClassId, classes]);
+
+  // Fetch PDF documents when class is selected - FIXED VERSION
+  const fetchPDFs = () => {
+    if (!selectedClassId) {
+      setPdfDocuments([]);
+      return () => {};
+    }
+
+    console.log('Fetching PDFs for class:', selectedClassId);
+    
+    const pdfRef = collection(db, COLLECTIONS.PDF_DOCUMENTS);
+    
+    // Simple query without orderBy first to avoid index issues
+    const q = query(
+      pdfRef,
+      where('classId', '==', selectedClassId)
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      console.log('PDF snapshot received:', snapshot.docs.length);
+      const pdfData = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      
+      // Sort manually by createdAt
+      const sortedData = pdfData.sort((a, b) => {
+        if (a.createdAt && b.createdAt) {
+          return b.createdAt.toDate() - a.createdAt.toDate();
+        }
+        return 0;
+      });
+      
+      console.log('PDF data:', sortedData);
+      setPdfDocuments(sortedData);
+    }, (error) => {
+      console.error('Error fetching PDFs:', error);
+      message.error('PDF-lər yüklənərkən xəta: ' + error.message);
+    });
+
+    return unsubscribe;
+  };
+
+  useEffect(() => {
+    const unsubscribe = fetchPDFs();
+    return () => {
+      if (unsubscribe) unsubscribe();
+    };
+  }, [selectedClassId]);
+
+  // Fetch lessons when class is selected
+  useEffect(() => {
+    if (!selectedClassId) {
       setLessons([]);
       return;
     }
 
+    setTableLoading(true);
     const lessonsRef = collection(db, COLLECTIONS.LESSONS);
     
     try {
+      // First try with orderBy
       const q = query(
         lessonsRef,
-        where('classId', '==', selectedClass.id),
+        where('classId', '==', selectedClassId),
         orderBy('order', 'asc')
       );
 
@@ -237,12 +744,14 @@ export const CreateClass = () => {
         }));
         setLessons(lessonsData);
         setIndexBuilding(false);
+        setTableLoading(false);
       }, (error) => {
         if (error.message.includes('index is currently building')) {
           setIndexBuilding(true);
+          // Fallback query without orderBy
           const fallbackQuery = query(
             lessonsRef,
-            where('classId', '==', selectedClass.id)
+            where('classId', '==', selectedClassId)
           );
           
           const fallbackUnsubscribe = onSnapshot(fallbackQuery, (snapshot) => {
@@ -264,15 +773,18 @@ export const CreateClass = () => {
               .map((item, index) => ({ ...item, sno: index + 1 }));
               
             setLessons(sortedData);
+            setTableLoading(false);
           }, (fallbackError) => {
             console.error('Error fetching lessons:', fallbackError);
             message.error('Error fetching lessons: ' + fallbackError.message);
+            setTableLoading(false);
           });
           
           return fallbackUnsubscribe;
         } else {
           console.error('Error fetching lessons:', error);
           message.error('Error fetching lessons: ' + error.message);
+          setTableLoading(false);
         }
       });
 
@@ -280,8 +792,55 @@ export const CreateClass = () => {
     } catch (error) {
       console.error('Error setting up lessons listener:', error);
       message.error('Error setting up lessons listener: ' + error.message);
+      setTableLoading(false);
     }
-  }, [selectedClass]);
+  }, [selectedClassId]);
+
+  const handleClassChange = (value) => {
+    console.log('Class changed to:', value);
+    setSelectedClassId(value);
+  };
+
+  const handlePDFSuccess = (pdfsData) => {
+    console.log('PDFs uploaded successfully:', pdfsData);
+    message.success(`${pdfsData.length} PDF uğurla əlavə edildi`);
+    setIsPDFImportVisible(false);
+  };
+
+  const handleDeletePDF = async (pdfId) => {
+    try {
+      await deleteDoc(doc(db, COLLECTIONS.PDF_DOCUMENTS, pdfId));
+      message.success('PDF silindi');
+      return true;
+    } catch (error) {
+      message.error('PDF silinərkən xəta: ' + error.message);
+      throw error;
+    }
+  };
+
+  const showPDFPreview = (pdf) => {
+    Modal.info({
+      title: pdf.fileName,
+      width: 900,
+      content: (
+        <div style={{ padding: '20px', height: '600px' }}>
+          <iframe
+            src={pdf.fileUrl}
+            width="100%"
+            height="100%"
+            title={pdf.fileName}
+            style={{ border: 'none' }}
+          />
+        </div>
+      ),
+      okText: 'Bağla',
+      okButtonProps: {
+        style: { background: '#1890ff' }
+      },
+      maskClosable: true,
+      width: 1000
+    });
+  };
 
   // Generate lessons using Gemini AI
   const generateLessonsWithAI = async () => {
@@ -290,7 +849,7 @@ export const CreateClass = () => {
       return;
     }
 
-    if (!selectedClass) {
+    if (!selectedClassId) {
       message.warning('Zəhmət olmasa əvvəlcə bir sinif seçin');
       return;
     }
@@ -303,8 +862,7 @@ export const CreateClass = () => {
       const difficultyText = aiDifficulty === 'easy' ? 'asan' : aiDifficulty === 'medium' ? 'orta' : 'çətin';
       const languageText = aiLanguage === 'az' ? 'Azərbaycan' : aiLanguage === 'en' ? 'İngilis' : 'Rus';
       const lessonTypeText = aiLessonType === 'theory' ? 'nəzəri' : aiLessonType === 'practice' ? 'praktik' : 'qarışıq';
-      
-      // Şəkillər daxil olan prompt
+
       const prompt = `
         Mənə ${aiLessonCount} ədəd ${difficultyText} çətinlik səviyyəsində, ${lessonTypeText} tipli dərs yaradın.
         Mövzu: ${aiPrompt}
@@ -322,7 +880,7 @@ export const CreateClass = () => {
         
         Hər dərsi aşağıdakı formatda yazın:
         
-        DƏRS ${1}:
+        DƏRS {1}:
         BAŞLIQ: [dərsin başlığı]
         MƏZMUN: [dərsin məzmunu - sadə dildə, aydın izah]
         ${aiIncludeImages ? 'ŞƏKİLLƏR: [ŞƏKİL 1: təsvir, ŞƏKİL 2: təsvir, ...]' : ''}
@@ -330,13 +888,12 @@ export const CreateClass = () => {
         TAPŞIRIQLAR: [tapşırıqlar - hər biri ayrı sətirdə]
         AÇAR SÖZLƏR: [açar söz1, açar söz2, açar söz3, ...]
         
-        DƏRS ${2}:
+        DƏRS {2}:
         ...
         
         Sadəcə mətni qaytarın, əlavə izahat yazmayın. HTML kodları yazmayın, sadə mətn formatında yazın.
       `;
 
-      // Simulate progress
       const progressInterval = setInterval(() => {
         setAiProgress(prev => {
           if (prev >= 90) {
@@ -378,7 +935,6 @@ export const CreateClass = () => {
 
       const generatedText = response.data.candidates[0].content.parts[0].text;
       
-      // Parse the generated text into lessons
       const lessons = parseGeneratedText(generatedText);
       
       if (lessons.length === 0) {
@@ -398,10 +954,9 @@ export const CreateClass = () => {
     }
   };
 
-  // Parse generated text into structured lessons
   const parseGeneratedText = (text) => {
     const lessons = [];
-    const lessonBlocks = text.split(/DƏRS \d+:/g).filter(block => block.trim().length > 0);
+    const lessonBlocks = text.split(/DƏRS \{\d+\}:/g).filter(block => block.trim().length > 0);
     
     lessonBlocks.forEach((block, index) => {
       const titleMatch = block.match(/BAŞLIQ:\s*(.+?)(?=MƏZMUN:|ŞƏKİLLƏR:|NÜMUNƏLƏR:|TAPŞIRIQLAR:|AÇAR SÖZLƏR:|$)/i);
@@ -420,7 +975,6 @@ export const CreateClass = () => {
         ? keywordsMatch[1].split(',').map(k => k.trim()) 
         : [selectedClass?.subject || 'Ümumi'];
       
-      // Şəkilləri parse et
       const images = [];
       if (imagesText && aiIncludeImages) {
         const imageMatches = imagesText.match(/ŞƏKİL \d+:\s*([^,]+)(?:,\s*(https?:\/\/[^\s]+))?/gi);
@@ -435,7 +989,6 @@ export const CreateClass = () => {
             });
           });
         } else {
-          // Əgər AI şəkil təsviri verməyibsə, mövzuya uyğun placeholder şəkillər əlavə et
           images.push({
             url: getRandomImageUrl(800, 400, index * 10 + 1),
             alt: title,
@@ -444,11 +997,9 @@ export const CreateClass = () => {
         }
       }
       
-      // Format examples and exercises as HTML lists if needed
       const formattedExamples = examples.split('\n').filter(line => line.trim()).map(line => `<li>${line}</li>`).join('');
       const formattedExercises = exercises.split('\n').filter(line => line.trim()).map(line => `<li>${line}</li>`).join('');
       
-      // Generate HTML content using the template with images
       const htmlContent = getLessonHTMLTemplate(
         title,
         content.replace(/\n/g, '<br>'),
@@ -475,7 +1026,6 @@ export const CreateClass = () => {
     return lessons;
   };
 
-  // Save selected lessons to Firestore
   const saveSelectedLessons = async () => {
     if (selectedLessons.length === 0) {
       message.warning('Heç bir dərs seçilməyib');
@@ -501,7 +1051,7 @@ export const CreateClass = () => {
           examples: lesson.examples,
           exercises: lesson.exercises,
           images: lesson.images || [],
-          classId: selectedClass.id,
+          classId: selectedClassId,
           createdAt: Timestamp.now(),
           updatedAt: Timestamp.now(),
           status: 'draft',
@@ -515,8 +1065,7 @@ export const CreateClass = () => {
         batch.set(newLessonRef, lessonData);
       });
 
-      // Update class lesson count
-      const classRef = doc(db, COLLECTIONS.CLASSES, selectedClass.id);
+      const classRef = doc(db, COLLECTIONS.CLASSES, selectedClassId);
       batch.update(classRef, {
         lessonCount: lessons.length + lessonsToSave.length,
         updatedAt: Timestamp.now()
@@ -587,7 +1136,8 @@ export const CreateClass = () => {
       setLoading(true);
       await deleteDoc(doc(db, COLLECTIONS.CLASSES, classId));
       message.success('Class deleted successfully');
-      if (selectedClass?.id === classId) {
+      if (selectedClassId === classId) {
+        setSelectedClassId(null);
         setSelectedClass(null);
       }
     } catch (error) {
@@ -615,7 +1165,7 @@ export const CreateClass = () => {
       const lessonData = {
         title: cleanValues.title,
         content: lessonContent,
-        classId: selectedClass.id,
+        classId: selectedClassId,
         createdAt: Timestamp.now(),
         updatedAt: Timestamp.now(),
         status: cleanValues.status,
@@ -635,7 +1185,7 @@ export const CreateClass = () => {
       } else {
         await addDoc(collection(db, COLLECTIONS.LESSONS), lessonData);
         
-        const classRef = doc(db, COLLECTIONS.CLASSES, selectedClass.id);
+        const classRef = doc(db, COLLECTIONS.CLASSES, selectedClassId);
         await updateDoc(classRef, {
           lessonCount: lessons.length + 1,
           updatedAt: Timestamp.now()
@@ -661,7 +1211,7 @@ export const CreateClass = () => {
       setLoading(true);
       await deleteDoc(doc(db, COLLECTIONS.LESSONS, lessonId));
       
-      const classRef = doc(db, COLLECTIONS.CLASSES, selectedClass.id);
+      const classRef = doc(db, COLLECTIONS.CLASSES, selectedClassId);
       await updateDoc(classRef, {
         lessonCount: Math.max(0, lessons.length - 1),
         updatedAt: Timestamp.now()
@@ -755,7 +1305,7 @@ export const CreateClass = () => {
   };
 
   const migrateLessons = async () => {
-    if (!selectedClass || lessons.length === 0) return;
+    if (!selectedClassId || lessons.length === 0) return;
     
     const lessonsWithoutOrder = lessons.filter(l => l.order === undefined);
     if (lessonsWithoutOrder.length === 0) return;
@@ -804,376 +1354,373 @@ export const CreateClass = () => {
     }
   }, [lessons]);
 
+  // Table columns
+  const columns = [
+    {
+      title: '№',
+      dataIndex: 'sno',
+      key: 'sno',
+      width: 60,
+      render: (text, record, index) => (
+        <Space>
+          <DragOutlined style={{ color: '#999', cursor: 'grab' }} />
+          <Tag color="blue">{text}</Tag>
+        </Space>
+      )
+    },
+    {
+      title: 'Dərsin Başlığı',
+      dataIndex: 'title',
+      key: 'title',
+      render: (text, record) => (
+        <Space>
+          <ReadOutlined style={{ color: '#1890ff' }} />
+          <Text strong>{text}</Text>
+          {record.isAIGenerated && (
+            <Tooltip title="AI tərəfindən yaradılıb">
+              <RobotOutlined style={{ color: '#722ed1' }} />
+            </Tooltip>
+          )}
+          {record.hasImages && (
+            <Tooltip title="Şəkillər var">
+              <PictureOutlined style={{ color: '#52c41a' }} />
+            </Tooltip>
+          )}
+        </Space>
+      )
+    },
+    {
+      title: 'Çətinlik',
+      dataIndex: 'difficulty',
+      key: 'difficulty',
+      width: 100,
+      render: (difficulty) => (
+        <Tag color={difficulty === 'easy' ? 'green' : difficulty === 'medium' ? 'orange' : 'red'}>
+          {difficulty === 'easy' ? 'Asan' : difficulty === 'medium' ? 'Orta' : 'Çətin'}
+        </Tag>
+      )
+    },
+    {
+      title: 'Status',
+      dataIndex: 'status',
+      key: 'status',
+      width: 100,
+      render: (status) => (
+        <Badge 
+          color={status === 'published' ? 'green' : status === 'draft' ? 'orange' : 'default'}
+          text={status === 'published' ? 'Dərc' : status === 'draft' ? 'Qaralama' : 'Arxiv'} 
+        />
+      )
+    },
+    {
+      title: 'Müddət',
+      dataIndex: 'duration',
+      key: 'duration',
+      width: 80,
+      render: (duration) => `${duration || 45} dəq`
+    },
+    {
+      title: 'Yaradılma Tarixi',
+      dataIndex: 'createdAt',
+      key: 'createdAt',
+      width: 120,
+      render: (createdAt) => createdAt ? new Date(createdAt.toDate()).toLocaleDateString('az-AZ') : '-'
+    },
+    {
+      title: 'Əməliyyatlar',
+      key: 'actions',
+      width: 150,
+      fixed: 'right',
+      render: (_, record) => (
+        <Space size="small">
+          <Tooltip title="Məzmunu göstər">
+            <Button 
+              type="text"
+              size="small"
+              icon={<EyeOutlined />}
+              onClick={() => showContentPreview(record)}
+            />
+          </Tooltip>
+          <Tooltip title="HTML kodu">
+            <Button 
+              type="text"
+              size="small"
+              icon={<CodeOutlined />}
+              onClick={() => {
+                Modal.info({
+                  title: `${record.title} - HTML Kodu`,
+                  width: 900,
+                  content: (
+                    <div style={{ maxHeight: '600px', overflow: 'auto' }}>
+                      <pre style={{ background: '#f5f5f5', padding: 15, borderRadius: 5 }}>
+                        {record.content}
+                      </pre>
+                    </div>
+                  ),
+                  okText: 'Bağla'
+                });
+              }}
+            />
+          </Tooltip>
+          <Tooltip title="Redaktə et">
+            <Button
+              type="text"
+              size="small"
+              icon={<EditOutlined />}
+              onClick={() => openLessonDrawer(record)}
+            />
+          </Tooltip>
+          <Tooltip title="Sil">
+            <Popconfirm
+              title="Bu dərsi silmək istədiyinizə əminsiniz?"
+              onConfirm={() => handleDeleteLesson(record.id)}
+              okText="Bəli"
+              cancelText="Xeyr"
+            >
+              <Button type="text" size="small" danger icon={<DeleteOutlined />} />
+            </Popconfirm>
+          </Tooltip>
+        </Space>
+      )
+    }
+  ];
+
   return (
-    <Layout style={{ minHeight: '100vh', padding: '24px', background: '#f0f2f5' }}>
+    <Layout style={{ minHeight: '100vh', background: '#f0f2f5' }}>
       {/* Header */}
       <div style={{ 
-        marginBottom: '24px', 
-        display: 'flex', 
-        justifyContent: 'space-between', 
-        alignItems: 'center',
         background: 'white',
         padding: '16px 24px',
-        borderRadius: '8px',
-        boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+        boxShadow: '0 1px 4px rgba(0,0,0,0.1)',
+        position: 'sticky',
+        top: 0,
+        zIndex: 1000
       }}>
-        <Space align="center">
-          <BookOutlined style={{ fontSize: '28px', color: '#1890ff' }} />
-          <Title level={3} style={{ margin: 0 }}>Dərslərin İdarə Edilməsi</Title>
-        </Space>
-        <Button
-          type="primary"
-          icon={<PlusOutlined />}
-          onClick={() => {
-            setEditingClass(null);
-            form.resetFields();
-            setIsClassModalVisible(true);
-          }}
-          size="large"
-        >
-          Yeni Sinif Yarat
-        </Button>
+        <Row align="middle" gutter={16}>
+          <Col flex="auto">
+            <Space align="center" size="large">
+              <BookOutlined style={{ fontSize: '28px', color: '#1890ff' }} />
+              <Title level={3} style={{ margin: 0 }}>Dərslərin İdarə Edilməsi</Title>
+            </Space>
+          </Col>
+          <Col>
+            <Space>
+              <Select
+                placeholder="Sinif seçin"
+                style={{ width: 300 }}
+                value={selectedClassId}
+                onChange={handleClassChange}
+                allowClear
+                showSearch
+                optionFilterProp="children"
+              >
+                {classes.map(c => (
+                  <Option key={c.id} value={c.id}>
+                    <Space>
+                      <BookOutlined />
+                      {c.name} {c.grade && `- ${c.grade}`}
+                      <Tag color="blue">{c.lessonCount || 0} dərs</Tag>
+                    </Space>
+                  </Option>
+                ))}
+              </Select>
+              <Button
+                type="primary"
+                icon={<PlusOutlined />}
+                onClick={() => {
+                  setEditingClass(null);
+                  form.resetFields();
+                  setIsClassModalVisible(true);
+                }}
+              >
+                Yeni Sinif
+              </Button>
+              <Button
+                icon={<ReloadOutlined />}
+                onClick={() => {
+                  if (selectedClassId) {
+                    setSelectedClassId(selectedClassId);
+                  }
+                }}
+              >
+                Yenilə
+              </Button>
+            </Space>
+          </Col>
+        </Row>
       </div>
 
-      <Row gutter={[24, 24]}>
-        {/* Left Column - Classes List */}
-        <Col xs={24} md={8}>
-          <Card 
-            title={
-              <Space>
-                <TeamOutlined />
-                <span>Siniflər</span>
-              </Space>
-            }
-            extra={<Tag color="blue">{classes.length} sinif</Tag>}
-            style={{ 
-              height: 'calc(100vh - 200px)', 
-              overflow: 'auto',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
-            }}
-            bodyStyle={{ padding: '12px' }}
-          >
-            <List
-              itemLayout="horizontal"
-              dataSource={classes}
-              loading={loading}
-              renderItem={(item) => (
-                <List.Item
-                  style={{
-                    padding: '12px',
-                    marginBottom: '8px',
-                    background: selectedClass?.id === item.id ? '#e6f7ff' : 'white',
-                    border: selectedClass?.id === item.id ? '1px solid #1890ff' : '1px solid #f0f0f0',
-                    borderRadius: '8px',
-                    cursor: 'pointer',
-                    transition: 'all 0.3s'
-                  }}
-                  onClick={() => setSelectedClass(item)}
-                  actions={[
-                    <Tooltip title="Redaktə et">
-                      <Button
-                        type="text"
-                        size="small"
-                        icon={<EditOutlined />}
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          setEditingClass(item);
-                          form.setFieldsValue({
-                            name: item.name,
-                            description: item.description,
-                            grade: item.grade,
-                            subject: item.subject,
-                            tags: item.tags || []
-                          });
-                          setIsClassModalVisible(true);
-                        }}
-                      />
-                    </Tooltip>,
-                    <Tooltip title="Sil">
-                      <Popconfirm
-                        title="Bu sinfi silmək istədiyinizə əminsiniz?"
-                        onConfirm={(e) => {
-                          e.stopPropagation();
-                          handleDeleteClass(item.id);
-                        }}
-                        okText="Bəli"
-                        cancelText="Xeyr"
-                      >
-                        <Button 
-                          type="text" 
-                          size="small"
-                          danger 
-                          icon={<DeleteOutlined />}
-                          onClick={(e) => e.stopPropagation()}
-                        />
-                      </Popconfirm>
-                    </Tooltip>
-                  ]}
-                >
-                  <List.Item.Meta
-                    avatar={
-                      <Avatar 
-                        icon={<BookOutlined />} 
-                        style={{ 
-                          background: selectedClass?.id === item.id ? '#1890ff' : '#f0f0f0',
-                          color: selectedClass?.id === item.id ? 'white' : '#595959'
-                        }} 
-                      />
-                    }
-                    title={<Text strong>{item.name || ''}</Text>}
-                    description={
-                      <Space size={[0, 4]} wrap>
-                        {item.grade && <Tag color="cyan">{item.grade}</Tag>}
-                        {item.subject && <Tag color="purple">{item.subject}</Tag>}
-                        <Tag color="blue">{item.lessonCount || 0} dərs</Tag>
-                        {item.isAIGenerated && (
-                          <Tag color="purple" icon={<RobotOutlined />}>AI</Tag>
-                        )}
-                      </Space>
-                    }
+      {/* Content */}
+      <div style={{ padding: '24px' }}>
+        {selectedClassId ? (
+          <>
+            {/* Class Info Cards */}
+            <Row gutter={16} style={{ marginBottom: 16 }}>
+              <Col span={6}>
+                <Card>
+                  <Statistic
+                    title="Cəmi Dərslər"
+                    value={lessons.length}
+                    prefix={<BookOutlined />}
                   />
-                </List.Item>
-              )}
-            />
-          </Card>
-        </Col>
+                </Card>
+              </Col>
+              <Col span={6}>
+                <Card>
+                  <Statistic
+                    title="AI Dərsləri"
+                    value={lessons.filter(l => l.isAIGenerated).length}
+                    prefix={<RobotOutlined />}
+                  />
+                </Card>
+              </Col>
+              <Col span={6}>
+                <Card>
+                  <Statistic
+                    title="PDF Sənədlər"
+                    value={pdfDocuments.length}
+                    prefix={<FilePdfOutlined />}
+                  />
+                </Card>
+              </Col>
+              <Col span={6}>
+                <Card>
+                  <Statistic
+                    title="Şəkilli Dərslər"
+                    value={lessons.filter(l => l.hasImages).length}
+                    prefix={<PictureOutlined />}
+                  />
+                </Card>
+              </Col>
+            </Row>
 
-        {/* Right Column - Lessons Table with Drag and Drop */}
-        <Col xs={24} md={16}>
-          <Card 
-            title={
-              <Space>
-                <ScheduleOutlined />
-                <span>
-                  {selectedClass 
-                    ? `Dərslər - ${selectedClass.name}` 
-                    : 'Dərslər (Sinif seçin)'}
-                </span>
-              </Space>
-            }
-            extra={
-              selectedClass ? (
-                <Space>
-                  {indexBuilding && (
-                    <Tag icon={<WarningOutlined />} color="warning">
-                      Index qurulur... Müvəqqəti sıralama
-                    </Tag>
-                  )}
-                  {lessons.filter(l => l.order === undefined).length > 0 && (
-                    <Tag icon={<WarningOutlined />} color="orange">
-                      {lessons.filter(l => l.order === undefined).length} köhnə dərs (avtomatik yenilənir)
-                    </Tag>
-                  )}
-                  <Tag icon={<DragOutlined />} color="blue">
-                    Dərsləri sürükləyib yerlərini dəyişin
-                  </Tag>
-                  <Button
-                    type="primary"
-                    icon={<RobotOutlined />}
-                    style={{ background: '#722ed1', borderColor: '#722ed1' }}
-                    onClick={() => setIsAIGeneratorVisible(true)}
-                  >
-                    AI ilə Dərs Yarat
-                  </Button>
-                  <Button
-                    type="primary"
-                    icon={<PlusOutlined />}
-                    onClick={() => openLessonDrawer()}
-                  >
-                    Yeni Dərs
-                  </Button>
-                </Space>
-              ) : null
-            }
-            style={{ 
-              height: 'calc(100vh - 200px)', 
-              overflow: 'auto',
-              boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
-            }}
-          >
-            {selectedClass ? (
-              lessons.length > 0 ? (
-                <DragDropContext onDragEnd={handleDragEnd}>
-                  <Droppable droppableId="lessons">
-                    {(provided) => (
-                      <div
-                        {...provided.droppableProps}
-                        ref={provided.innerRef}
-                      >
-                        {lessons.map((lesson, index) => (
-                          <Draggable
-                            key={lesson.id}
-                            draggableId={lesson.id}
-                            index={index}
-                          >
-                            {(provided, snapshot) => (
-                              <div
-                                ref={provided.innerRef}
-                                {...provided.draggableProps}
-                                style={{
-                                  ...provided.draggableProps.style,
-                                  marginBottom: '8px',
-                                }}
-                              >
-                                <Card
-                                  size="small"
-                                  style={{
-                                    background: snapshot.isDragging ? '#f9f9f9' : 'white',
-                                    border: snapshot.isDragging ? '2px dashed #1890ff' : '1px solid #f0f0f0',
-                                    boxShadow: snapshot.isDragging ? '0 4px 12px rgba(0,0,0,0.15)' : 'none',
-                                    opacity: lesson.order === undefined ? 0.8 : 1,
-                                  }}
-                                  bodyStyle={{ padding: '12px' }}
-                                >
-                                  <Row align="middle" gutter={16}>
-                                    <Col span={1}>
-                                      <div {...provided.dragHandleProps}>
-                                        <DragOutlined style={{ 
-                                          fontSize: '18px', 
-                                          color: '#999',
-                                          cursor: 'grab'
-                                        }} />
-                                      </div>
-                                    </Col>
-                                    <Col span={1}>
-                                      <Tag color={lesson.order === undefined ? "orange" : "blue"}>
-                                        {index + 1}
-                                      </Tag>
-                                    </Col>
-                                    <Col span={5}>
-                                      <Space>
-                                        <ReadOutlined style={{ color: '#1890ff' }} />
-                                        <Text strong>{lesson.title || ''}</Text>
-                                        {lesson.order === undefined && (
-                                          <Tooltip title="Köhnə dərs, yenilənir...">
-                                            <WarningOutlined style={{ color: '#faad14' }} />
-                                          </Tooltip>
-                                        )}
-                                        {lesson.isAIGenerated && (
-                                          <Tooltip title="AI tərəfindən yaradılıb">
-                                            <RobotOutlined style={{ color: '#722ed1' }} />
-                                          </Tooltip>
-                                        )}
-                                        {lesson.hasImages && (
-                                          <Tooltip title="Şəkillər var">
-                                            <PictureOutlined style={{ color: '#52c41a' }} />
-                                          </Tooltip>
-                                        )}
-                                      </Space>
-                                    </Col>
-                                    <Col span={2}>
-                                      <Tag color={lesson.difficulty === 'easy' ? 'green' : lesson.difficulty === 'medium' ? 'orange' : 'red'}>
-                                        {lesson.difficulty === 'easy' ? 'Asan' : lesson.difficulty === 'medium' ? 'Orta' : 'Çətin'}
-                                      </Tag>
-                                    </Col>
-                                    <Col span={2}>
-                                      <Badge 
-                                        color={lesson.status === 'published' ? 'green' : lesson.status === 'draft' ? 'orange' : 'default'}
-                                        text={lesson.status === 'published' ? 'Dərc' : lesson.status === 'draft' ? 'Qaralama' : 'Arxiv'} 
-                                      />
-                                    </Col>
-                                    <Col span={3}>
-                                      <Text type="secondary">
-                                        {lesson.duration || 45} dəq
-                                      </Text>
-                                    </Col>
-                                    <Col span={3}>
-                                      <Text type="secondary">
-                                        {lesson.createdAt ? new Date(lesson.createdAt.toDate()).toLocaleDateString('az-AZ') : '-'}
-                                      </Text>
-                                    </Col>
-                                    <Col span={7} style={{ textAlign: 'right' }}>
-                                      <Space size="small">
-                                        <Tooltip title="Məzmunu göstər">
-                                          <Button 
-                                            type="text"
-                                            size="small"
-                                            icon={<EyeOutlined />}
-                                            onClick={() => showContentPreview(lesson)}
-                                          />
-                                        </Tooltip>
-                                        <Tooltip title="HTML kodu göstər">
-                                          <Button 
-                                            type="text"
-                                            size="small"
-                                            icon={<CodeOutlined />}
-                                            onClick={() => {
-                                              Modal.info({
-                                                title: `${lesson.title} - HTML Kodu`,
-                                                width: 900,
-                                                content: (
-                                                  <div style={{ maxHeight: '600px', overflow: 'auto' }}>
-                                                    <pre style={{ background: '#f5f5f5', padding: 15, borderRadius: 5 }}>
-                                                      {lesson.content}
-                                                    </pre>
-                                                  </div>
-                                                ),
-                                                okText: 'Bağla'
-                                              });
-                                            }}
-                                          />
-                                        </Tooltip>
-                                        <Tooltip title="Redaktə et">
-                                          <Button
-                                            type="text"
-                                            size="small"
-                                            icon={<EditOutlined />}
-                                            onClick={() => openLessonDrawer(lesson)}
-                                          />
-                                        </Tooltip>
-                                        <Tooltip title="Sil">
-                                          <Popconfirm
-                                            title="Bu dərsi silmək istədiyinizə əminsiniz?"
-                                            onConfirm={() => handleDeleteLesson(lesson.id)}
-                                            okText="Bəli"
-                                            cancelText="Xeyr"
-                                          >
-                                            <Button type="text" size="small" danger icon={<DeleteOutlined />} />
-                                          </Popconfirm>
-                                        </Tooltip>
-                                      </Space>
-                                    </Col>
-                                  </Row>
-                                </Card>
-                              </div>
-                            )}
-                          </Draggable>
-                        ))}
-                        {provided.placeholder}
-                      </div>
+            {/* Action Buttons */}
+            <Card style={{ marginBottom: 16 }}>
+              <Row justify="space-between" align="middle">
+                <Col>
+                  <Space size="middle">
+                    <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={() => openLessonDrawer()}
+                    >
+                      Yeni Dərs
+                    </Button>
+                    <Button
+                      icon={<FilePdfOutlined />}
+                      style={{ background: '#ff4d4f', borderColor: '#ff4d4f', color: 'white' }}
+                      onClick={() => setIsPDFImportVisible(true)}
+                    >
+                      Çoxlu PDF Yüklə
+                    </Button>
+                    <Button
+                      icon={<EyeOutlined />}
+                      onClick={() => {
+                        console.log('Opening PDF list, documents:', pdfDocuments);
+                        setIsPDFListVisible(true);
+                      }}
+                    >
+                      PDF-lərə Bax ({pdfDocuments.length})
+                    </Button>
+                    <Button
+                      icon={<RobotOutlined />}
+                      style={{ background: '#722ed1', borderColor: '#722ed1', color: 'white' }}
+                      onClick={() => setIsAIGeneratorVisible(true)}
+                    >
+                      AI ilə Yarat
+                    </Button>
+                  </Space>
+                </Col>
+                <Col>
+                  <Space>
+                    {indexBuilding && (
+                      <Tag icon={<WarningOutlined />} color="warning">
+                        Index qurulur... Müvəqqəti sıralama
+                      </Tag>
                     )}
-                  </Droppable>
-                </DragDropContext>
-              ) : (
-                <div style={{ textAlign: 'center', padding: '48px' }}>
-                  <FileOutlined style={{ fontSize: 48, color: '#ccc' }} />
-                  <p style={{ marginTop: '16px', color: '#999' }}>
-                    Hələ dərs yoxdur. "Yeni Dərs" düyməsini klikləyin.
-                  </p>
-                  <Button
-                    type="primary"
-                    icon={<RobotOutlined />}
-                    style={{ background: '#722ed1', borderColor: '#722ed1', marginTop: '16px' }}
-                    onClick={() => setIsAIGeneratorVisible(true)}
-                  >
-                    AI ilə Dərs Yarat
-                  </Button>
-                </div>
-              )
-            ) : (
-              <div style={{ textAlign: 'center', padding: '80px 48px' }}>
-                <TeamOutlined style={{ fontSize: 64, color: '#ccc' }} />
-                <Title level={4} type="secondary" style={{ marginTop: '16px' }}>
-                  Sinif Seçin
-                </Title>
-                <Text type="secondary">
-                  Dərsləri görmək üçün sol paneldən bir sinif seçin
-                </Text>
-              </div>
-            )}
+                    <Tag icon={<DragOutlined />} color="blue">
+                      Sürükləyərək sıralayın
+                    </Tag>
+                  </Space>
+                </Col>
+              </Row>
+            </Card>
+
+            {/* Lessons Table with Drag and Drop */}
+            <Card
+              title={
+                <Space>
+                  <ScheduleOutlined />
+                  <span>{selectedClass?.name} - Dərslər</span>
+                </Space>
+              }
+              style={{ boxShadow: '0 1px 2px rgba(0,0,0,0.03)' }}
+            >
+              <DragDropContext onDragEnd={handleDragEnd}>
+                <Droppable droppableId="lessons" type="lesson">
+                  {(provided) => (
+                    <div
+                      {...provided.droppableProps}
+                      ref={provided.innerRef}
+                    >
+                      <Table
+                        dataSource={lessons}
+                        columns={columns}
+                        loading={tableLoading}
+                        pagination={{ pageSize: 20 }}
+                        scroll={{ x: 1200 }}
+                        rowKey="id"
+                        components={{
+                          body: {
+                            row: ({ children, ...props }) => {
+                              const index = props['data-row-key'];
+                              const lesson = lessons.find(l => l.id === index);
+                              return (
+                                <Draggable
+                                  draggableId={index}
+                                  index={lessons.findIndex(l => l.id === index)}
+                                >
+                                  {(provided, snapshot) => (
+                                    <tr
+                                      ref={provided.innerRef}
+                                      {...provided.draggableProps}
+                                      {...provided.dragHandleProps}
+                                      style={{
+                                        ...provided.draggableProps.style,
+                                        background: snapshot.isDragging ? '#f9f9f9' : 'white',
+                                        border: snapshot.isDragging ? '2px dashed #1890ff' : 'none',
+                                        opacity: lesson?.order === undefined ? 0.8 : 1,
+                                        cursor: 'grab'
+                                      }}
+                                    >
+                                      {children}
+                                    </tr>
+                                  )}
+                                </Draggable>
+                              );
+                            }
+                          }
+                        }}
+                      />
+                      {provided.placeholder}
+                    </div>
+                  )}
+                </Droppable>
+              </DragDropContext>
+            </Card>
+          </>
+        ) : (
+          <Card style={{ textAlign: 'center', padding: '80px 48px' }}>
+            <TeamOutlined style={{ fontSize: 64, color: '#ccc' }} />
+            <Title level={4} type="secondary" style={{ marginTop: '16px' }}>
+              Sinif Seçin
+            </Title>
+            <Text type="secondary">
+              Dərsləri görmək üçün yuxarıdakı seçim qutusundan bir sinif seçin
+            </Text>
           </Card>
-        </Col>
-      </Row>
+        )}
+      </div>
 
       {/* Class Modal */}
       <Modal
@@ -1253,7 +1800,7 @@ export const CreateClass = () => {
         </Form>
       </Modal>
 
-      {/* Lesson Drawer with HtmlEditorComp */}
+      {/* Lesson Drawer */}
       <Drawer
         title={editingLesson ? 'Dərsi Redaktə Et' : 'Yeni Dərs Yarat'}
         placement="right"
@@ -1388,18 +1935,6 @@ export const CreateClass = () => {
           >
             <div dangerouslySetInnerHTML={{ __html: lessonContent }} />
           </Card>
-
-          <Divider>HTML Kodu</Divider>
-          
-          <Card
-            title="HTML Kodu"
-            bordered
-            style={{ marginBottom: 24 }}
-          >
-            <pre style={{ background: '#f5f5f5', padding: 15, borderRadius: 5, maxHeight: 300, overflow: 'auto' }}>
-              {lessonContent}
-            </pre>
-          </Card>
         </Form>
       </Drawer>
 
@@ -1424,7 +1959,7 @@ export const CreateClass = () => {
         width={900}
       >
         <Spin spinning={aiGenerating}>
-          {!selectedClass && (
+          {!selectedClassId && (
             <Alert
               message="Xəbərdarlıq"
               description="Dərs yaratmaq üçün əvvəlcə bir sinif seçməlisiniz."
@@ -1684,6 +2219,28 @@ export const CreateClass = () => {
           </div>
         </Spin>
       </Modal>
+
+      {/* Multi PDF Import Modal */}
+      <MultiPDFImportModal
+        visible={isPDFImportVisible}
+        onCancel={() => setIsPDFImportVisible(false)}
+        onSuccess={handlePDFSuccess}
+        classId={selectedClassId}
+      />
+
+      {/* PDF List Drawer */}
+      <PDFListDrawer
+        visible={isPDFListVisible}
+        onClose={() => setIsPDFListVisible(false)}
+        pdfs={pdfDocuments}
+        onViewPDF={showPDFPreview}
+        onDeletePDF={handleDeletePDF}
+        onRefresh={() => {
+          if (selectedClassId) {
+            fetchPDFs();
+          }
+        }}
+      />
     </Layout>
   );
 };
