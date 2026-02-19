@@ -90,7 +90,7 @@ const COLLECTIONS = {
 };
 
 // Gemini API configuration
-const GEMINI_API_KEY = 'AIzaSyCSYojEExI98cnAmn4fsg7LbjnHfaEd6c4';
+const GEMINI_API_KEY = 'AIzaSyAKKgBCNrXIkRjyNEup9T5Lxpuakv9jWdM';
 const GEMINI_API_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent';
 
 // Şəkil URL-ləri üçün placeholder (picsum photos - pulsuz şəkillər)
